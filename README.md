@@ -26,3 +26,7 @@ conda install -c conda-forge vegafusion
 
 ## Documentation
 See [Documentation](https://vegafusion.io/) and [Examples](https://github.com/vega/vegafusion/tree/v2/examples/python-examples/chart_state.py).
+
+## Development
+
+Refer to [build docs](BUILD.md) to learn how to develop and run local version of VegaFusion.

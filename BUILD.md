@@ -25,6 +25,8 @@ Start the test minio server in a dedicated terminal
 pixi run start-minio
 ```
 
+If command fails unable to import numpy, check [this workaround](https://github.com/conda-forge/numpy-feedstock/issues/347#issuecomment-2779297248).
+
 Build and test the VegaFusion Rust crates with:
 
 ```
@@ -41,58 +43,34 @@ pixi run test-rs-sql
 
 ## Build and test Python
 
-### vegafusion and vegafusion-python-embed
-Build and test the `vegafusion` and `vegafusion-python-embed` Python packages with
-```
-pixi run test-py-vegafusion
-```
-
-### vegafusion-jupyter
-Build and test the `vegafusion-jupyter` Python package with
-```
-pixi run test-py-jupyter-headless
-```
-
-This requires a system installation of Chrome, but the correct version of the chrome driver should be installed automatically by the `chromedriver-binary-auto` package. 
-
-The command above will run the browser-based tests in headless mode. To instead display the browser during testing, use:
+Build and test the `vegafusion-python` package with:
 
 ```
-pixi run test-py-jupyter
+pixi run test-py
 ```
 
-### Try Python packages in JupyterLab
-To use the development versions of the Python packages in JupyterLab, first install the packages in development mode with:
+### Try Python package
+To use the development versions of the Python package, first install the packages in development mode with:
 
 ```
-pixi run dev-py-jupyter
+pixi run dev-py
 ```
 
-Then launch JupyterLab
+Then just run your Python script with Pixi, it will use development build of VegaFusion:
 
 ```
-pixi run jupyter-lab
+pixi run python examples/python-examples/column_usage.py
 ```
+
 
 ## Build Python packages for distribution
-To build Python wheels for the current platform, the `build-py-embed`, `build-py-vegafusion`, and `build-py-jupyter` tasks may be used
+To build Python wheels for the current platform, the `build-py` task may be used
 
 ```
-pixi run build-py-embed
+pixi run build-py
 ```
 This will build a wheel and sdist in the `target/wheels` directory.
 
-```
-pixi run build-py-vegafusion
-```
-
-This will build a wheel and sdist to the `python/vegafusion/dist` directory
-
-```
-pixi run build-py-jupyter
-```
-
-This will build a wheel and sdist to the `python/vegafusion-jupyter/dist` directory
 
 
 ## Making a change to development conda environment requirements
