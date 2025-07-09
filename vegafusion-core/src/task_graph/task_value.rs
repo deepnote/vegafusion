@@ -3,6 +3,7 @@ use crate::proto::gen::tasks::ResponseTaskValue;
 use crate::proto::gen::tasks::{TaskGraphValueResponse, TaskValue as ProtoTaskValue, Variable};
 use crate::task_graph::memory::{inner_size_of_scalar, inner_size_of_table};
 use datafusion_common::ScalarValue;
+use vegafusion_common::datafusion_expr::LogicalPlan;
 use serde_json::Value;
 use std::convert::TryFrom;
 use vegafusion_common::arrow::record_batch::RecordBatch;
@@ -45,6 +46,28 @@ impl TaskValue {
         };
 
         std::mem::size_of::<Self>() + inner_size
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum TaskPlan {
+    Scalar(ScalarValue),
+    Plan(LogicalPlan),
+}
+
+impl TaskPlan {
+    pub fn as_scalar(&self) -> Result<&ScalarValue> {
+        match self {
+            TaskPlan::Scalar(value) => Ok(value),
+            _ => Err(VegaFusionError::internal("Plan is not a scalar")),
+        }
+    }
+
+    pub fn as_plan(&self) -> Result<&LogicalPlan> {
+        match self {
+            TaskPlan::Plan(plan) => Ok(plan),
+            _ => Err(VegaFusionError::internal("Plan is not a logical plan")),
+        }
     }
 }
 

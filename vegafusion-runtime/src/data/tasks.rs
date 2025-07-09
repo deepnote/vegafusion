@@ -29,9 +29,8 @@ use vegafusion_core::proto::gen::tasks::data_url_task::Url;
 use vegafusion_core::proto::gen::tasks::scan_url_format;
 use vegafusion_core::proto::gen::tasks::scan_url_format::Parse;
 use vegafusion_core::proto::gen::tasks::{DataSourceTask, DataUrlTask, DataValuesTask};
-use vegafusion_core::proto::gen::transforms::TransformPipeline;
 use vegafusion_core::task_graph::task::{InputVariable, TaskDependencies};
-use vegafusion_core::task_graph::task_value::TaskValue;
+use vegafusion_core::task_graph::task_value::{TaskValue, TaskPlan};
 
 use crate::data::util::{DataFrameUtils, SessionContextUtils};
 use crate::transform::utils::str_to_timestamp;
@@ -99,127 +98,159 @@ impl TaskCall for DataUrlTask {
         inline_datasets: HashMap<String, VegaFusionDataset>,
         ctx: Arc<SessionContext>,
     ) -> Result<(TaskValue, Vec<TaskValue>)> {
-        // Build compilation config for url signal (if any) and transforms (if any)
-        let config = build_compilation_config(&self.input_vars(), values, tz_config);
+        let (df, config) = load_data_url_task_dataframe(self, values, tz_config, inline_datasets, ctx).await?;
 
-        // Build url string
-        let url = match self.url.as_ref().unwrap() {
-            Url::String(url) => url.clone(),
-            Url::Expr(expr) => {
-                let compiled = compile(expr, &config, None)?;
-                let url_scalar = compiled.eval_to_scalar()?;
-                url_scalar.to_scalar_string()?
-            }
-        };
-
-        // Strip trailing Hash, e.g. https://foo.csv#1234 -> https://foo.csv
-        let url_parts: Vec<&str> = url.splitn(2, '#').collect();
-        let url = url_parts.first().cloned().unwrap_or(&url).to_string();
-
-        // Handle references to vega default datasets (e.g. "data/us-10m.json")
-        let url = check_builtin_dataset(url);
-
-        // Load data from URL
-        let parse = self.format_type.as_ref().and_then(|fmt| fmt.parse.clone());
-        let file_type = self.format_type.as_ref().and_then(|fmt| fmt.r#type.clone());
-
-        // Vega-Lite sets unspecified file types to "json", so we don't want this to take
-        // precedence over file extension
-        let file_type = if file_type == Some("json".to_string()) {
-            None
-        } else {
-            file_type.as_deref()
-        };
-
-        let df = if let Some(inline_name) = extract_inline_dataset(&url) {
-            let inline_name = inline_name.trim().to_string();
-            if let Some(inline_dataset) = inline_datasets.get(&inline_name) {
-                match inline_dataset {
-                    VegaFusionDataset::Table { table, .. } => {
-                        let table = table.clone().with_ordering()?;
-                        ctx.vegafusion_table(table).await?
-                    }
-                    VegaFusionDataset::Plan { plan } => {
-                        ctx.execute_logical_plan(plan.clone()).await?
-                    }
-                }
-            } else if let Ok(df) = ctx.table(&inline_name).await {
-                df
-            } else {
-                return Err(VegaFusionError::internal(format!(
-                    "No inline dataset named {inline_name}"
-                )));
-            }
-        } else if file_type == Some("csv") || (file_type.is_none() && url.ends_with(".csv")) {
-            read_csv(&url, &parse, ctx, false).await?
-        } else if file_type == Some("tsv") || (file_type.is_none() && url.ends_with(".tsv")) {
-            read_csv(&url, &parse, ctx, true).await?
-        } else if file_type == Some("json") || (file_type.is_none() && url.ends_with(".json")) {
-            read_json(&url, ctx).await?
-        } else if file_type == Some("arrow")
-            || (file_type.is_none() && (url.ends_with(".arrow") || url.ends_with(".feather")))
+        // Apply transforms (if any)
+        let (transformed_df, output_values) = if self.pipeline
+            .as_ref()
+            .map(|p| !p.transforms.is_empty())
+            .unwrap_or(false)
         {
-            read_arrow(&url, ctx).await?
-        } else if file_type == Some("parquet")
-            || (file_type.is_none() && (url.ends_with(".parquet")))
+            let pipeline = self.pipeline.as_ref().unwrap();
+            pipeline.eval_sql(df, &config).await?
+        } else {
+            // No transforms, just remove any ordering column
+            (
+                df.collect_to_table().await?.without_ordering()?,
+                Vec::new(),
+            )
+        };
+
+        let table_value = TaskValue::Table(transformed_df.without_ordering()?);
+
+        Ok((table_value, output_values))
+    }
+
+    async fn plan(
+        &self,
+        values: &[TaskValue],
+        tz_config: &Option<RuntimeTzConfig>,
+        inline_datasets: HashMap<String, VegaFusionDataset>,
+        ctx: Arc<SessionContext>,
+    ) -> Result<(TaskPlan, Vec<TaskValue>)> {
+        let (df, config) = load_data_url_task_dataframe(self, values, tz_config, inline_datasets, ctx).await?;
+
+        // Apply transforms (if any)
+        let (logical_plan, output_values) = if self.pipeline
+            .as_ref()
+            .map(|p| !p.transforms.is_empty())
+            .unwrap_or(false)
         {
-            cfg_if! {
-                if #[cfg(any(feature = "parquet"))] {
-                    read_parquet(&url, ctx).await?
-                } else {
-                    return Err(VegaFusionError::internal(format!(
-                        "Enable parquet support by enabling the `parquet` feature flag"
-                    )))
-                }
-            }
+            let pipeline = self.pipeline.as_ref().unwrap();
+            pipeline.eval_to_logical_plan(df, &config).await?
         } else {
-            return Err(VegaFusionError::internal(format!(
-                "Invalid url file extension {url}"
-            )));
+            // No transforms, just get the logical plan
+            (df.logical_plan().clone(), Vec::new())
         };
 
-        // Ensure there is an ordering column present
-        let df = if df.schema().inner().column_with_name(ORDER_COL).is_none() {
-            df.with_index(ORDER_COL).await?
-        } else {
-            df
-        };
+        let task_plan = TaskPlan::Plan(logical_plan);
 
-        // Perform any up-front type conversions
-        let df = pre_process_column_types(df).await?;
-
-        // Process datetime columns
-        let df = process_datetimes(&parse, df, &config.tz_config).await?;
-
-        eval_sql_df(df, &self.pipeline, &config).await
+        Ok((task_plan, output_values))
     }
 }
 
-async fn eval_sql_df(
-    sql_df: DataFrame,
-    pipeline: &Option<TransformPipeline>,
-    config: &CompilationConfig,
-) -> Result<(TaskValue, Vec<TaskValue>)> {
-    // Apply transforms (if any)
-    let (transformed_df, output_values) = if pipeline
-        .as_ref()
-        .map(|p| !p.transforms.is_empty())
-        .unwrap_or(false)
-    {
-        let pipeline = pipeline.as_ref().unwrap();
-        pipeline.eval_sql(sql_df, config).await?
-    } else {
-        // No transforms, just remove any ordering column
-        (
-            sql_df.collect_to_table().await?.without_ordering()?,
-            Vec::new(),
-        )
+async fn load_data_url_task_dataframe(
+    data_url_task: &DataUrlTask,
+    values: &[TaskValue],
+    tz_config: &Option<RuntimeTzConfig>,
+    inline_datasets: HashMap<String, VegaFusionDataset>,
+    ctx: Arc<SessionContext>,
+) -> Result<(DataFrame, CompilationConfig)> {
+    // Build compilation config for url signal (if any) and transforms (if any)
+    let config = build_compilation_config(&data_url_task.input_vars(), values, tz_config);
+
+    // Build url string
+    let url = match data_url_task.url.as_ref().unwrap() {
+        Url::String(url) => url.clone(),
+        Url::Expr(expr) => {
+            let compiled = compile(expr, &config, None)?;
+            let url_scalar = compiled.eval_to_scalar()?;
+            url_scalar.to_scalar_string()?
+        }
     };
 
-    let table_value = TaskValue::Table(transformed_df.without_ordering()?);
+    // Strip trailing Hash, e.g. https://foo.csv#1234 -> https://foo.csv
+    let url_parts: Vec<&str> = url.splitn(2, '#').collect();
+    let url = url_parts.first().cloned().unwrap_or(&url).to_string();
 
-    Ok((table_value, output_values))
+    // Handle references to vega default datasets (e.g. "data/us-10m.json")
+    let url = check_builtin_dataset(url);
+
+    // Load data from URL
+    let parse = data_url_task.format_type.as_ref().and_then(|fmt| fmt.parse.clone());
+    let file_type = data_url_task.format_type.as_ref().and_then(|fmt| fmt.r#type.clone());
+
+    // Vega-Lite sets unspecified file types to "json", so we don't want this to take
+    // precedence over file extension
+    let file_type = if file_type == Some("json".to_string()) {
+        None
+    } else {
+        file_type.as_deref()
+    };
+
+    let df = if let Some(inline_name) = extract_inline_dataset(&url) {
+        let inline_name = inline_name.trim().to_string();
+        if let Some(inline_dataset) = inline_datasets.get(&inline_name) {
+            match inline_dataset {
+                VegaFusionDataset::Table { table, .. } => {
+                    let table = table.clone().with_ordering()?;
+                    ctx.vegafusion_table(table).await?
+                }
+                VegaFusionDataset::Plan { plan } => {
+                    ctx.execute_logical_plan(plan.clone()).await?
+                }
+            }
+        } else if let Ok(df) = ctx.table(&inline_name).await {
+            df
+        } else {
+            return Err(VegaFusionError::internal(format!(
+                "No inline dataset named {inline_name}"
+            )));
+        }
+    } else if file_type == Some("csv") || (file_type.is_none() && url.ends_with(".csv")) {
+        read_csv(&url, &parse, ctx, false).await?
+    } else if file_type == Some("tsv") || (file_type.is_none() && url.ends_with(".tsv")) {
+        read_csv(&url, &parse, ctx, true).await?
+    } else if file_type == Some("json") || (file_type.is_none() && url.ends_with(".json")) {
+        read_json(&url, ctx).await?
+    } else if file_type == Some("arrow")
+        || (file_type.is_none() && (url.ends_with(".arrow") || url.ends_with(".feather")))
+    {
+        read_arrow(&url, ctx).await?
+    } else if file_type == Some("parquet")
+        || (file_type.is_none() && (url.ends_with(".parquet")))
+    {
+        cfg_if! {
+            if #[cfg(any(feature = "parquet"))] {
+                read_parquet(&url, ctx).await?
+            } else {
+                return Err(VegaFusionError::internal(format!(
+                    "Enable parquet support by enabling the `parquet` feature flag"
+                )))
+            }
+        }
+    } else {
+        return Err(VegaFusionError::internal(format!(
+            "Invalid url file extension {url}"
+        )));
+    };
+
+    // Ensure there is an ordering column present
+    let df = if df.schema().inner().column_with_name(ORDER_COL).is_none() {
+        df.with_index(ORDER_COL).await?
+    } else {
+        df
+    };
+
+    // Perform any up-front type conversions
+    let df = pre_process_column_types(df).await?;
+
+    // Process datetime columns
+    let df = process_datetimes(&parse, df, &config.tz_config).await?;
+
+    Ok((df, config))
 }
+
 
 lazy_static! {
     static ref BUILT_IN_DATASETS: HashSet<&'static str> = vec![
@@ -545,6 +576,16 @@ impl TaskCall for DataValuesTask {
 
         Ok((table_value, output_values))
     }
+
+    async fn plan(
+        &self,
+        _values: &[TaskValue],
+        _tz_config: &Option<RuntimeTzConfig>,
+        _inline_datasets: HashMap<String, VegaFusionDataset>,
+        _ctx: Arc<SessionContext>,
+    ) -> Result<(TaskPlan, Vec<TaskValue>)> {
+        Err(VegaFusionError::internal("DataValuesTask plan method not yet implemented"))
+    }
 }
 
 #[async_trait]
@@ -589,6 +630,16 @@ impl TaskCall for DataSourceTask {
 
         let table_value = TaskValue::Table(transformed_table.without_ordering()?);
         Ok((table_value, output_values))
+    }
+
+    async fn plan(
+        &self,
+        _values: &[TaskValue],
+        _tz_config: &Option<RuntimeTzConfig>,
+        _inline_datasets: HashMap<String, VegaFusionDataset>,
+        _ctx: Arc<SessionContext>,
+    ) -> Result<(TaskPlan, Vec<TaskValue>)> {
+        Err(VegaFusionError::internal("DataSourceTask plan method not yet implemented"))
     }
 }
 
