@@ -166,19 +166,18 @@ impl PyVegaFusionRuntime {
                 let imported_datasets = inline_datasets
                     .iter()
                     .map(|(name, inline_dataset)| {
-                        let inline_dataset = inline_dataset.to_object(py);
-                        let inline_dataset = inline_dataset.bind(py);
+                        let inline_dataset = inline_dataset;
                         let dataset = if inline_dataset.hasattr("__arrow_c_stream__")? {
                             // Import via Arrow PyCapsule Interface
                             let (table, hash) =
-                                VegaFusionTable::from_pyarrow_with_hash(py, inline_dataset)?;
+                                VegaFusionTable::from_pyarrow_with_hash(py, &inline_dataset)?;
                             VegaFusionDataset::from_table(table, Some(hash))?
                         } else {
                             // Assume PyArrow Table
                             // We convert to ipc bytes for two reasons:
                             // - It allows VegaFusionDataset to compute an accurate hash of the table
                             // - It works around https://github.com/hex-inc/vegafusion/issues/268
-                            let table = VegaFusionTable::from_pyarrow(py, inline_dataset)?;
+                            let table = VegaFusionTable::from_pyarrow(py, &inline_dataset)?;
                             VegaFusionDataset::from_table_ipc_bytes(&table.to_ipc_bytes()?)?
                         };
 
@@ -201,16 +200,14 @@ impl PyVegaFusionRuntime {
                 let imported_datasets = inline_datasets
                     .iter()
                     .map(|(name, inline_dataset)| {
-                        let inline_dataset = inline_dataset.to_object(py);
-                        let inline_dataset = inline_dataset.bind(py);
                         let table = if inline_dataset.hasattr("__arrow_c_stream__")? {
                             // Import via Arrow PyCapsule Interface
                             let (table, _hash) =
-                                VegaFusionTable::from_pyarrow_with_hash(py, inline_dataset)?;
+                                VegaFusionTable::from_pyarrow_with_hash(py, &inline_dataset)?;
                             table
                         } else {
                             // Assume PyArrow Table
-                            VegaFusionTable::from_pyarrow(py, inline_dataset)?
+                            VegaFusionTable::from_pyarrow(py, &inline_dataset)?
                         };
 
                         // Create an empty MemTable with the same schema but no data
@@ -445,10 +442,10 @@ impl PyVegaFusionRuntime {
             .collect();
 
         Python::with_gil(|py| -> PyResult<(PyObject, PyObject)> {
-            let py_response_list = PyList::empty_bound(py);
+            let py_response_list = PyList::empty(py);
             for value in values {
                 let pytable: PyObject = if let TaskValue::Table(table) = value {
-                    table.to_pyo3_arrow()?.into_py(py)
+                    table.to_pyo3_arrow()?.to_pyarrow(py)?.into()
                 } else {
                     return Err(PyErr::from(VegaFusionError::internal(
                         "Unexpected value type",
@@ -529,14 +526,18 @@ impl PyVegaFusionRuntime {
             let datasets = datasets
                 .into_iter()
                 .map(|tbl| {
-                    let name = tbl.name.into_py(py);
-                    let scope = tbl.scope.into_py(py);
+                    let name: PyObject = tbl.name.into_pyobject(py)?.into();
+                    let scope: PyObject = tbl.scope.into_pyobject(py)?.into();
                     let table = match extracted_format.as_str() {
-                        "arro3" => tbl.table.to_pyo3_arrow()?.into_py(py),
-                        "pyarrow" => tbl.table.to_pyo3_arrow()?.to_pyarrow(py)?.into_py(py),
-                        "arrow-ipc" => PyBytes::new_bound(py, tbl.table.to_ipc_bytes()?.as_slice())
-                            .to_object(py),
-                        "arrow-ipc-base64" => tbl.table.to_ipc_base64()?.into_py(py),
+                        "arro3" => {
+                            let pytable = tbl.table.to_pyo3_arrow()?;
+                            pytable.to_pyarrow(py)?.into()
+                        }
+                        "pyarrow" => tbl.table.to_pyo3_arrow()?.to_pyarrow(py)?.into(),
+                        "arrow-ipc" => {
+                            PyBytes::new(py, tbl.table.to_ipc_bytes()?.as_slice()).into()
+                        }
+                        "arrow-ipc-base64" => tbl.table.to_ipc_base64()?.into_pyobject(py)?.into(),
                         _ => {
                             return Err(PyValueError::new_err(format!(
                                 "Invalid extracted_format: {}",
@@ -545,8 +546,7 @@ impl PyVegaFusionRuntime {
                         }
                     };
 
-                    let dataset: PyObject =
-                        PyTuple::new_bound(py, &[name, scope, table]).into_py(py);
+                    let dataset: PyObject = PyTuple::new(py, &[name, scope, table])?.into();
                     Ok(dataset)
                 })
                 .collect::<PyResult<Vec<_>>>()?;
@@ -626,13 +626,13 @@ impl PyVegaFusionRuntime {
                     let sql = unparser.plan_to_sql(&plan_obj.plan).unwrap().to_string();
                     let logical_plan_str = format!("{}", plan_obj.plan.display_indent());
                     
-                    let plan_dict = PyDict::new_bound(py);
-                    plan_dict.set_item("name", plan_obj.name.into_py(py))?;
-                    plan_dict.set_item("scope", plan_obj.scope.into_py(py))?;
+                    let plan_dict = PyDict::new(py);
+                    plan_dict.set_item("name", plan_obj.name)?;
+                    plan_dict.set_item("scope", plan_obj.scope)?;
                     plan_dict.set_item("logical_plan", logical_plan_str)?;
                     plan_dict.set_item("sql", sql)?;
                     
-                    Ok(plan_dict.into_py(py))
+                    Ok(plan_dict.into())
                 })
                 .collect::<PyResult<Vec<_>>>()?;
 

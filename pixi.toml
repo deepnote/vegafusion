@@ -57,14 +57,14 @@ test-rs-runtime-s3 = { cmd = "VEGAFUSION_S3_TESTS=1 cargo test -p vegafusion-run
 ] }
 test-rs-server = "cargo test -p vegafusion-server $0"
 test-rs-sql = "cargo test -p vegafusion-sql $0"
-test-rs = { cmd = "cargo test --workspace --exclude vegafusion --exclude vegafusion-wasm $0", depends-on = [
+test-rs = { cmd = "cargo test --workspace --exclude vegafusion --exclude vegafusion-wasm --exclude vegafusion-python $0", depends-on = [
   "build-vegajs-runtime",
 ] }
 
 run-rs-server = "cargo run --release -p vegafusion-server "
 
 # Build Wasm
-install-wasm-toolchain = "python automation/download_rust_target.py wasm32-unknown-unknown"
+install-wasm-toolchain = "rustup target add wasm32-unknown-unknown"
 install-wasm-pack = "export CARGO_HOME=$PIXI_PROJECT_ROOT/.pixi/envs/default && cargo install wasm-pack"
 build-wasm = { cmd = """
 python automation/set_default_release_profile.py small &&
@@ -131,7 +131,6 @@ jupytext = "1.15.0.*"
 openjdk = "20.0.0.*"
 minio-server = "2023.9.23.3.47.50.*"
 minio = "7.1.17.*"
-rust = "1.84.*"
 taplo = ">=0.9.3,<0.10"
 ruff = ">=0.6.9,<0.7"
 mypy = ">=1.11.2,<2"
@@ -157,10 +156,11 @@ anywidget = ">=0.9.6,<0.10"
 polars = "1.8.*"
 grpcio = ">=1.56.2,<2"
 pyarrow = "16.*"
+libgfortran = ">=15.1.0"
 
 [pypi-dependencies]
 # Works around pixi solve conflict with arrow >13
-scikit-image = ">=0.24"
+scikit-image = ">=0.25"
 
 [target.osx-arm64.build-dependencies]
 # These dependencies are for building node canvas from source on apple silicon
