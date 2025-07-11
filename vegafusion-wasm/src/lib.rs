@@ -162,6 +162,15 @@ impl VegaFusionRuntimeTrait for QueryFnVegaFusionRuntime {
         self
     }
 
+    async fn plan_request(
+        &self,
+        task_graph: Arc<TaskGraph>,
+        indices: &[NodeValueIndex],
+        inline_datasets: &HashMap<String, VegaFusionDataset>,
+    ) -> vegafusion_common::error::Result<Vec<NamedTaskValue>> {
+        todo!()
+    }
+
     async fn query_request(
         &self,
         task_graph: Arc<TaskGraph>,

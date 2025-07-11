@@ -2,7 +2,7 @@ use crate::expression::compiler::compile;
 use crate::expression::compiler::config::CompilationConfig;
 use crate::transform::TransformTrait;
 
-use crate::data::util::SessionContextUtils;
+use vegafusion_core::data::util::SessionContextUtils;
 use crate::expression::compiler::utils::ExprHelpers;
 use async_trait::async_trait;
 use datafusion::prelude::{DataFrame, SessionContext};

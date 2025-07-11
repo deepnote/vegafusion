@@ -7,7 +7,7 @@ use datafusion_functions_aggregate::variance::{var_pop_udaf, var_samp_udaf};
 use sqlparser::ast::NullTreatment;
 use std::collections::HashMap;
 
-use crate::data::util::DataFrameUtils;
+use vegafusion_core::data::util::DataFrameUtils;
 use crate::datafusion::udafs::percentile::{Q1_UDF, Q3_UDF};
 use async_trait::async_trait;
 use datafusion::prelude::DataFrame;

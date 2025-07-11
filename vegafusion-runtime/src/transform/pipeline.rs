@@ -4,11 +4,10 @@ use crate::transform::TransformTrait;
 use itertools::Itertools;
 use std::collections::HashMap;
 
-use crate::data::util::DataFrameUtils;
+use vegafusion_core::data::util::{DataFrameUtils, SessionContextUtils};
 use async_trait::async_trait;
-use datafusion::prelude::DataFrame;
+use datafusion::prelude::{DataFrame, SessionContext};
 use datafusion_expr::expr;
-use datafusion_expr::LogicalPlan;
 use vegafusion_common::column::flat_col;
 use vegafusion_common::data::table::VegaFusionTable;
 use vegafusion_common::data::ORDER_COL;
@@ -24,13 +23,15 @@ pub trait TransformPipelineUtils {
         &self,
         dataframe: DataFrame,
         config: &CompilationConfig,
+        ctx: &SessionContext,
     ) -> Result<(VegaFusionTable, Vec<TaskValue>)>;
     
-    async fn eval_to_logical_plan(
+    async fn eval_to_df(
         &self,
         dataframe: DataFrame,
         config: &CompilationConfig,
-    ) -> Result<(LogicalPlan, Vec<TaskValue>)>;
+        ctx: &SessionContext,
+    ) -> Result<(DataFrame, Vec<TaskValue>)>;
 }
 
 #[async_trait]
@@ -39,20 +40,21 @@ impl TransformPipelineUtils for TransformPipeline {
         &self,
         dataframe: DataFrame,
         config: &CompilationConfig,
+        ctx: &SessionContext,
     ) -> Result<(VegaFusionTable, Vec<TaskValue>)> {
-        let (result_df, signals) = build_dataframe(self, dataframe, config).await?;
+        let (result_df, signals) = build_dataframe(self, dataframe, config, ctx).await?;
         let table = result_df.collect_to_table().await?;
         Ok((table, signals))
     }
     
-    async fn eval_to_logical_plan(
+    async fn eval_to_df(
         &self,
         dataframe: DataFrame,
         config: &CompilationConfig,
-    ) -> Result<(LogicalPlan, Vec<TaskValue>)> {
-        let (result_df, signals) = build_dataframe(self, dataframe, config).await?;
-        let logical_plan = result_df.logical_plan().clone();
-        Ok((logical_plan, signals))
+        ctx: &SessionContext,
+    ) -> Result<(DataFrame, Vec<TaskValue>)> {
+        let (result_df, signals) = build_dataframe(self, dataframe, config, ctx).await?;
+        Ok((result_df, signals))
     }
 }
 
@@ -61,6 +63,7 @@ async fn build_dataframe(
     pipeline: &TransformPipeline,
     sql_df: DataFrame,
     config: &CompilationConfig,
+    ctx: &SessionContext,
 ) -> Result<(DataFrame, Vec<TaskValue>)> {
     let mut result_sql_df = sql_df;
     let mut result_outputs: HashMap<Variable, TaskValue> = Default::default();
@@ -76,27 +79,6 @@ async fn build_dataframe(
             "DataFrame input to eval_sql does not have the expected {ORDER_COL} ordering column"
         )));
     }
-
-    // Helper function to add variable value to config
-    let add_output_var_to_config =
-        |config: &mut CompilationConfig, var: &Variable, val: TaskValue| -> Result<()> {
-            match var.ns() {
-                VariableNamespace::Signal => {
-                    config
-                        .signal_scope
-                        .insert(var.name.clone(), val.as_scalar()?.clone());
-                }
-                VariableNamespace::Data => {
-                    config
-                        .data_scope
-                        .insert(var.name.clone(), val.as_table()?.clone());
-                }
-                VariableNamespace::Scale => {
-                    unimplemented!()
-                }
-            }
-            Ok(())
-        };
 
     for tx in pipeline.transforms.iter() {
         // Append transform and update result df
@@ -121,7 +103,33 @@ async fn build_dataframe(
 
             // Also add output signals to config scope so they are available to the following
             // transforms
-            add_output_var_to_config(&mut config, var, val)?;
+            match var.ns() {
+                VariableNamespace::Signal => {
+                    config
+                        .signal_scope
+                        .insert(var.name.clone(), val.as_scalar()?.clone());
+                }
+                VariableNamespace::Data => {
+                    match val {
+                        TaskValue::DataFrame(df) => {
+                            config
+                                .data_scope
+                                .insert(var.name.clone(), df.clone());
+                        },
+                        TaskValue::Table(table) => {
+                            let df = ctx.vegafusion_table(table.clone()).await?;
+                            config
+                                .data_scope
+                                .insert(var.name.clone(), df);
+                        },
+                        _ => unimplemented!()
+                    }
+                    
+                }
+                VariableNamespace::Scale => {
+                    unimplemented!()
+                }
+            }
         }
     }
 

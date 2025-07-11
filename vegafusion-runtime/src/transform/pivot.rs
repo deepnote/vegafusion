@@ -1,4 +1,4 @@
-use crate::data::util::DataFrameUtils;
+use vegafusion_core::data::util::DataFrameUtils;
 use crate::expression::compiler::config::CompilationConfig;
 use crate::transform::aggregate::make_agg_expr_for_col_expr;
 use crate::transform::TransformTrait;

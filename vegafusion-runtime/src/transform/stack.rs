@@ -1,4 +1,4 @@
-use crate::data::util::DataFrameUtils;
+use vegafusion_core::data::util::DataFrameUtils;
 use crate::expression::compiler::config::CompilationConfig;
 use crate::transform::TransformTrait;
 use async_trait::async_trait;

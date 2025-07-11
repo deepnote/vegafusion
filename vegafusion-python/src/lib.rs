@@ -29,6 +29,12 @@ use vegafusion_core::planning::plan::{PlannerConfig, PreTransformSpecWarningSpec
 use vegafusion_core::planning::projection_pushdown::get_column_usage as rs_get_column_usage;
 use vegafusion_core::planning::watch::{ExportUpdateJSON, WatchPlan};
 
+use datafusion::sql::unparser::{Unparser};
+use datafusion::sql::unparser::dialect::CustomDialectBuilder;
+use datafusion::datasource::{provider_as_source, MemTable};
+use vegafusion_common::datafusion_expr::LogicalPlanBuilder;
+use vegafusion_common::datafusion_common::TableReference;
+
 use vegafusion_core::spec::chart::ChartSpec;
 use vegafusion_core::task_graph::graph::ScopedVariable;
 use vegafusion_core::task_graph::task_value::TaskValue;
@@ -176,6 +182,54 @@ impl PyVegaFusionRuntime {
                             VegaFusionDataset::from_table_ipc_bytes(&table.to_ipc_bytes()?)?
                         };
 
+                        Ok((name.to_string(), dataset))
+                    })
+                    .collect::<PyResult<HashMap<_, _>>>()?;
+                Ok(imported_datasets)
+            })
+        } else {
+            Ok(Default::default())
+        }
+    }
+
+    fn process_inline_datasets_plan(
+        &self,
+        inline_datasets: Option<&Bound<PyDict>>,
+    ) -> PyResult<HashMap<String, VegaFusionDataset>> {
+        if let Some(inline_datasets) = inline_datasets {
+            Python::with_gil(|py| -> PyResult<_> {
+                let imported_datasets = inline_datasets
+                    .iter()
+                    .map(|(name, inline_dataset)| {
+                        let inline_dataset = inline_dataset.to_object(py);
+                        let inline_dataset = inline_dataset.bind(py);
+                        let table = if inline_dataset.hasattr("__arrow_c_stream__")? {
+                            // Import via Arrow PyCapsule Interface
+                            let (table, _hash) =
+                                VegaFusionTable::from_pyarrow_with_hash(py, inline_dataset)?;
+                            table
+                        } else {
+                            // Assume PyArrow Table
+                            VegaFusionTable::from_pyarrow(py, inline_dataset)?
+                        };
+
+                        // Create an empty MemTable with the same schema but no data
+                        let empty_batches = vec![]; // Empty batches
+                        let mem_table = MemTable::try_new(table.schema.clone(), empty_batches)
+                            .map_err(|e| PyValueError::new_err(format!("Failed to create empty MemTable: {}", e)))?;
+
+                        // Create a logical plan that scans from a table with the dataset name
+                        let table_ref = TableReference::from(name.to_string());
+                        let logical_plan = LogicalPlanBuilder::scan(
+                            table_ref,
+                            provider_as_source(Arc::new(mem_table)),
+                            None,
+                        )
+                        .map_err(|e| PyValueError::new_err(format!("Failed to create logical plan: {}", e)))?
+                        .build()
+                        .map_err(|e| PyValueError::new_err(format!("Failed to build logical plan: {}", e)))?;
+
+                        let dataset = VegaFusionDataset::from_plan(logical_plan);
                         Ok((name.to_string(), dataset))
                     })
                     .collect::<PyResult<HashMap<_, _>>>()?;
@@ -500,6 +554,91 @@ impl PyVegaFusionRuntime {
             let warnings = pythonize::pythonize(py, &warnings)?;
 
             Ok((tx_spec.into(), datasets, warnings.into()))
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (spec, local_tz, default_input_tz=None, preserve_interactivity=None, inline_datasets=None, keep_signals=None, keep_datasets=None))]
+    pub fn pre_transform_logical_plan(
+        &self,
+        py: Python,
+        spec: PyObject,
+        local_tz: String,
+        default_input_tz: Option<String>,
+        preserve_interactivity: Option<bool>,
+        inline_datasets: Option<&Bound<PyDict>>,
+        keep_signals: Option<Vec<(String, Vec<u32>)>>,
+        keep_datasets: Option<Vec<(String, Vec<u32>)>>,
+    ) -> PyResult<(PyObject, Vec<PyObject>, PyObject)> {
+        let inline_datasets = self.process_inline_datasets_plan(inline_datasets)?;
+        let spec = parse_json_spec(spec)?;
+        let preserve_interactivity = preserve_interactivity.unwrap_or(true);
+
+        // Build keep_variables
+        let mut keep_variables: Vec<PreTransformVariable> = Vec::new();
+        for (name, scope) in keep_signals.unwrap_or_default() {
+            keep_variables.push(PreTransformVariable {
+                variable: Some(Variable::new_signal(&name)),
+                scope,
+            });
+        }
+        for (name, scope) in keep_datasets.unwrap_or_default() {
+            keep_variables.push(PreTransformVariable {
+                variable: Some(Variable::new_data(&name)),
+                scope,
+            });
+        }
+
+        let (tx_spec, logical_plans, warnings) = py.allow_threads(|| {
+            self.tokio_runtime
+                .block_on(self.runtime.pre_transform_logical_plan(
+                    &spec,
+                    &inline_datasets,
+                    &PreTransformExtractOpts {
+                        local_tz,
+                        default_input_tz,
+                        preserve_interactivity,
+                        extract_threshold: 0, // Not used for logical plans
+                        keep_variables,
+                    },
+                ))
+        })?;
+
+        let warnings: Vec<_> = warnings
+            .iter()
+            .map(|warning| match warning.warning_type.as_ref().unwrap() {
+                ExtractWarningType::Planner(planner_warning) => PreTransformSpecWarningSpec {
+                    typ: "Planner".to_string(),
+                    message: planner_warning.message.clone(),
+                },
+            })
+            .collect();
+
+        Python::with_gil(|py| {
+            let tx_spec = pythonize::pythonize(py, &tx_spec)?;
+
+            let dialect = CustomDialectBuilder::new().build();
+            let unparser = Unparser::new(&dialect).with_pretty(true);
+            let plans = logical_plans
+                .into_iter()
+                .map(|plan_obj| {
+                    // Convert logical plan to SQL - simplified version for now
+                    let sql = unparser.plan_to_sql(&plan_obj.plan).unwrap().to_string();
+                    let logical_plan_str = format!("{}", plan_obj.plan.display_indent());
+                    
+                    let plan_dict = PyDict::new_bound(py);
+                    plan_dict.set_item("name", plan_obj.name.into_py(py))?;
+                    plan_dict.set_item("scope", plan_obj.scope.into_py(py))?;
+                    plan_dict.set_item("logical_plan", logical_plan_str)?;
+                    plan_dict.set_item("sql", sql)?;
+                    
+                    Ok(plan_dict.into_py(py))
+                })
+                .collect::<PyResult<Vec<_>>>()?;
+
+            let warnings = pythonize::pythonize(py, &warnings)?;
+
+            Ok((tx_spec.into(), plans, warnings.into()))
         })
     }
 

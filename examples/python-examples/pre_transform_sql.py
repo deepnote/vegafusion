@@ -1,6 +1,7 @@
 import json
 from typing import Any
 
+from pprint import pprint
 import pandas as pd
 import vegafusion as vf
 
@@ -9,179 +10,167 @@ def main():
     spec = get_spec()
     print('Helloooooo')
     
-    # Create movies DataFrame with correct schema but zero rows
-    movies_df = pd.DataFrame({
-        'Title': pd.Series([], dtype='string'),
-        'US Gross': pd.Series([], dtype='Int64'),
-        'Worldwide Gross': pd.Series([], dtype='Int64'),
-        'US DVD Sales': pd.Series([], dtype='Int64'),
-        'Production Budget': pd.Series([], dtype='Int64'),
-        'Release Date': pd.Series([], dtype='string'),
-        'MPAA Rating': pd.Series([], dtype='string'),
-        'Running Time min': pd.Series([], dtype='Int64'),
-        'Distributor': pd.Series([], dtype='string'),
-        'Source': pd.Series([], dtype='string'),
-        'Major Genre': pd.Series([], dtype='string'),
-        'Creative Type': pd.Series([], dtype='string'),
-        'Director': pd.Series([], dtype='string'),
-        'Rotten Tomatoes Rating': pd.Series([], dtype='float64'),
-        'IMDB Rating': pd.Series([], dtype='float64'),
-        'IMDB Votes': pd.Series([], dtype='Int64')
+    # Create orders DataFrame with correct schema but zero rows
+    orders_df = pd.DataFrame({
+        'datetime': pd.Series([], dtype='datetime64[ns]'),
+        'product_category': pd.Series([], dtype='object'),
+        'product_name': pd.Series([], dtype='object'),
+        'price': pd.Series([], dtype='float64'),
+        'quantity': pd.Series([], dtype='int64'),
+        'discount': pd.Series([], dtype='float64'),
+        'discount_type': pd.Series([], dtype='object'),
+        'order_total': pd.Series([], dtype='float64'),
+        'customer_name': pd.Series([], dtype='object'),
+        'customer_email': pd.Series([], dtype='object'),
+        'customer_age': pd.Series([], dtype='int64'),
+        'country': pd.Series([], dtype='object'),
+        'customer_segment': pd.Series([], dtype='object'),
+        'satisfaction_score': pd.Series([], dtype='int64')
     })
     
-    spec, sql, warnings = vf.runtime.pre_transform_sql(
-        spec, inline_datasets={"movies": movies_df}
+    spec, datasets, warnings = vf.runtime.pre_transform_logical_plan(
+        spec, inline_datasets={"orders": orders_df}
     )
     assert warnings == []
-    print(sql)
+    # for ds in datasets:
+    ds = datasets[0]
+    print('Dataset', ds['name'])
+    print(ds['sql'])
+    print('---------------------')
+    print(ds['logical_plan'])
 
 
 def get_spec() -> dict[str, Any]:
     """
     Based on https://vega.github.io/editor/#/examples/vega/histogram-null-values
     """
-    spec_str = """
+    spec_str = r"""
 {
-  "$schema": "https://vega.github.io/schema/vega/v5.json",
-  "description": "A histogram of film ratings, modified to include null values.",
-  "width": 400,
-  "height": 200,
+  "$schema": "https://vega.github.io/schema/vega/v6.json",
+  "background": "white",
   "padding": 5,
-  "autosize": {"type": "fit", "resize": true},
+  "height": 300,
+  "style": "cell",
   "data": [
     {
-      "name": "table",
-      "url": "vegafusion+dataset://movies",
+      "name": "data_0",
+      "url": "vegafusion+dataset://orders",
       "transform": [
-        {
-          "type": "extent", "field": "IMDB Rating",
-          "signal": "extent"
-        },
-        {
-          "type": "bin", "signal": "bins",
-          "field": "IMDB Rating", "extent": {"signal": "extent"},
-          "maxbins": 10
-        }
-      ]
-    },
-    {
-      "name": "counts",
-      "source": "table",
-      "transform": [
-        {
-          "type": "filter",
-          "expr": "datum['IMDB Rating'] != null"
-        },
         {
           "type": "aggregate",
-          "groupby": ["bin0", "bin1"]
-        }
-      ]
-    },
-    {
-      "name": "nulls",
-      "source": "table",
-      "transform": [
-        {
-          "type": "filter",
-          "expr": "datum['IMDB Rating'] == null"
+          "groupby": ["product_category", "country"],
+          "ops": ["sum"],
+          "fields": ["order_total"],
+          "as": ["sum_order_total"]
         },
         {
-          "type": "aggregate",
-          "groupby": []
+          "type": "stack",
+          "groupby": ["product_category"],
+          "field": "sum_order_total",
+          "sort": {"field": ["country"], "order": ["descending"]},
+          "as": ["sum_order_total_start", "sum_order_total_end"],
+          "offset": "zero"
+        },
+        {
+          "type": "filter",
+          "expr": "isValid(datum[\"sum_order_total\"]) && isFinite(+datum[\"sum_order_total\"])"
         }
       ]
     }
   ],
   "signals": [
+    {"name": "x_step", "value": 20},
     {
-      "name": "maxbins", "value": 10
-    },
+      "name": "width",
+      "update": "bandspace(domain('x').length, 0.1, 0.05) * x_step"
+    }
+  ],
+  "marks": [
     {
-      "name": "binCount",
-      "update": "(bins.stop - bins.start) / bins.step"
-    },
-    {
-      "name": "nullGap", "value": 10
-    },
-    {
-      "name": "barStep",
-      "update": "(width - nullGap) / (1 + binCount)"
+      "name": "marks",
+      "type": "rect",
+      "style": ["bar"],
+      "from": {"data": "data_0"},
+      "encode": {
+        "update": {
+          "fill": {"scale": "color", "field": "country"},
+          "ariaRoleDescription": {"value": "bar"},
+          "description": {
+            "signal": "\"product_category: \" + (isValid(datum[\"product_category\"]) ? datum[\"product_category\"] : \"\"+datum[\"product_category\"]) + \"; Sum of order_total: \" + (format(datum[\"sum_order_total\"], \"\")) + \"; country: \" + (isValid(datum[\"country\"]) ? datum[\"country\"] : \"\"+datum[\"country\"])"
+          },
+          "x": {"scale": "x", "field": "product_category"},
+          "width": {"signal": "max(0.25, bandwidth('x'))"},
+          "y": {"scale": "y", "field": "sum_order_total_end"},
+          "y2": {"scale": "y", "field": "sum_order_total_start"}
+        }
+      }
     }
   ],
   "scales": [
     {
-      "name": "yscale",
-      "type": "linear",
-      "range": "height",
-      "round": true, "nice": true,
-      "domain": {
-        "fields": [
-          {"data": "counts", "field": "count"},
-          {"data": "nulls", "field": "count"}
-        ]
-      }
-    },
-    {
-      "name": "xscale",
-      "type": "linear",
-      "range": [{"signal": "barStep + nullGap"}, {"signal": "width"}],
-      "round": true,
-      "domain": {"signal": "[bins.start, bins.stop]"},
-      "bins": {"signal": "bins"}
-    },
-    {
-      "name": "xscale-null",
+      "name": "x",
       "type": "band",
-      "range": [0, {"signal": "barStep"}],
-      "round": true,
-      "domain": [null]
-    }
-  ],
-
-  "axes": [
-    {"orient": "bottom", "scale": "xscale", "tickMinStep": 0.5},
-    {"orient": "bottom", "scale": "xscale-null"},
-    {"orient": "left", "scale": "yscale", "tickCount": 5, "offset": 5}
-  ],
-
-  "marks": [
-    {
-      "type": "rect",
-      "from": {"data": "counts"},
-      "encode": {
-        "update": {
-          "x": {"scale": "xscale", "field": "bin0", "offset": 1},
-          "x2": {"scale": "xscale", "field": "bin1"},
-          "y": {"scale": "yscale", "field": "count"},
-          "y2": {"scale": "yscale", "value": 0},
-          "fill": {"value": "steelblue"}
-        },
-        "hover": {
-          "fill": {"value": "firebrick"}
-        }
-      }
+      "domain": {"data": "data_0", "field": "product_category", "sort": true},
+      "range": {"step": {"signal": "x_step"}},
+      "paddingInner": 0.1,
+      "paddingOuter": 0.05
     },
     {
-      "type": "rect",
-      "from": {"data": "nulls"},
-      "encode": {
-        "update": {
-          "x": {"scale": "xscale-null", "value": null, "offset": 1},
-          "x2": {"scale": "xscale-null", "band": 1},
-          "y": {"scale": "yscale", "field": "count"},
-          "y2": {"scale": "yscale", "value": 0},
-          "fill": {"value": "#aaa"}
-        },
-        "hover": {
-          "fill": {"value": "firebrick"}
-        }
-      }
+      "name": "y",
+      "type": "linear",
+      "domain": {
+        "data": "data_0",
+        "fields": ["sum_order_total_start", "sum_order_total_end"]
+      },
+      "range": [{"signal": "height"}, 0],
+      "nice": true,
+      "zero": true
+    },
+    {
+      "name": "color",
+      "type": "ordinal",
+      "domain": {"data": "data_0", "field": "country", "sort": true},
+      "range": "category"
     }
-  ]
+  ],
+  "axes": [
+    {
+      "scale": "y",
+      "orient": "left",
+      "gridScale": "x",
+      "grid": true,
+      "tickCount": {"signal": "ceil(height/40)"},
+      "domain": false,
+      "labels": false,
+      "aria": false,
+      "maxExtent": 0,
+      "minExtent": 0,
+      "ticks": false,
+      "zindex": 0
+    },
+    {
+      "scale": "x",
+      "orient": "bottom",
+      "grid": false,
+      "title": "product_category",
+      "labelAlign": "right",
+      "labelAngle": 270,
+      "labelBaseline": "middle",
+      "zindex": 0
+    },
+    {
+      "scale": "y",
+      "orient": "left",
+      "grid": false,
+      "title": "Sum of order_total",
+      "labelOverlap": true,
+      "tickCount": {"signal": "ceil(height/40)"},
+      "zindex": 0
+    }
+  ],
+  "legends": [{"fill": "color", "symbolType": "square", "title": "country"}]
 }
-
-    """
+"""
     return json.loads(spec_str)
 
 

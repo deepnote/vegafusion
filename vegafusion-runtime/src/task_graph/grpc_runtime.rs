@@ -1,13 +1,15 @@
 use vegafusion_core::{
     data::dataset::VegaFusionDataset,
     proto::gen::{
+        pretransform::{PreTransformExtractOpts, PreTransformExtractWarning},
         services::{
             query_request, query_result, vega_fusion_runtime_client::VegaFusionRuntimeClient,
             QueryRequest,
         },
         tasks::{NodeValueIndex, TaskGraph, TaskGraphValueRequest},
     },
-    runtime::VegaFusionRuntimeTrait,
+    runtime::{PreTransformLogicalPlan, VegaFusionRuntimeTrait},
+    spec::chart::ChartSpec,
     task_graph::task_value::NamedTaskValue,
 };
 
@@ -61,6 +63,28 @@ impl VegaFusionRuntimeTrait for GrpcVegaFusionRuntime {
                 "Invalid response type".to_string(),
             )),
         }
+    }
+
+    async fn plan_request(
+        &self,
+        _task_graph: Arc<TaskGraph>,
+        _indices: &[NodeValueIndex],
+        _inline_datasets: &HashMap<String, VegaFusionDataset>,
+    ) -> Result<Vec<NamedTaskValue>> {
+        Err(VegaFusionError::internal("plan_request not implemented for gRPC runtime"))
+    }
+
+    async fn pre_transform_logical_plan(
+        &self,
+        _spec: &ChartSpec,
+        _inline_datasets: &HashMap<String, VegaFusionDataset>,
+        _options: &PreTransformExtractOpts,
+    ) -> Result<(
+        ChartSpec,
+        Vec<PreTransformLogicalPlan>,
+        Vec<PreTransformExtractWarning>,
+    )> {
+        Err(VegaFusionError::internal("pre_transform_logical_plan not implemented for gRPC runtime"))
     }
 }
 

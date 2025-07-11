@@ -68,3 +68,6 @@ features = ["extension-module", "abi3-py39"]
 
 [dependencies.pyo3-arrow]
 workspace = true
+
+[dependencies.datafusion]
+workspace = true

@@ -2,7 +2,7 @@ use crate::expression::compiler::config::CompilationConfig;
 use crate::transform::TransformTrait;
 use async_trait::async_trait;
 
-use crate::data::util::DataFrameUtils;
+use vegafusion_core::data::util::DataFrameUtils;
 use datafusion::arrow::array::RecordBatch;
 use datafusion::prelude::DataFrame;
 use datafusion_common::utils::array_into_list_array;

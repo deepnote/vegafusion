@@ -128,7 +128,7 @@ pub fn eval_vegafusion_transforms(
         .unwrap();
 
     let (result_data, result_signals) = TOKIO_RUNTIME
-        .block_on(pipeline.eval_sql(sql_df, compilation_config))
+        .block_on(pipeline.eval_sql(sql_df, compilation_config, &ctx))
         .unwrap();
     let result_signals = result_signals
         .into_iter()

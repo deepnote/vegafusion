@@ -10,14 +10,17 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::panic::AssertUnwindSafe;
+
 use std::sync::Arc;
 use vegafusion_core::data::dataset::VegaFusionDataset;
 use vegafusion_core::error::{Result, ResultWithContext, VegaFusionError};
+use vegafusion_core::proto::gen::pretransform::{PreTransformExtractOpts, PreTransformExtractWarning};
 use vegafusion_core::proto::gen::tasks::inline_dataset::Dataset;
 use vegafusion_core::proto::gen::tasks::{
-    task::TaskKind, InlineDataset, InlineDatasetTable, NodeValueIndex, TaskGraph,
+    task::TaskKind, InlineDataset, InlineDatasetTable, NodeValueIndex, Task, TaskGraph,
 };
-use vegafusion_core::runtime::VegaFusionRuntimeTrait;
+use vegafusion_core::runtime::{PreTransformLogicalPlan, VegaFusionRuntimeTrait};
+use vegafusion_core::spec::chart::ChartSpec;
 use vegafusion_core::task_graph::task_value::{NamedTaskValue, TaskValue};
 
 #[cfg(feature = "proto")]
@@ -70,22 +73,44 @@ impl VegaFusionRuntime {
         })
     }
 
+    pub async fn get_node_plan(
+        &self,
+        task_graph: Arc<TaskGraph>,
+        node_value_index: &NodeValueIndex,
+        inline_datasets: HashMap<String, VegaFusionDataset>,
+    ) -> Result<TaskValue> {
+        // We shouldn't panic inside get_or_compute_node_value_plan, but since this may be used
+        // in a server context, wrap in catch_unwind just in case.
+        let node_value = AssertUnwindSafe(get_or_compute_node_value_plan(
+            task_graph,
+            node_value_index.node_index as usize,
+            self.cache.clone(),
+            inline_datasets,
+            self.ctx.clone(),
+        ))
+        .catch_unwind()
+        .await;
+
+        let mut node_value = node_value
+            .ok()
+            .with_context(|| "Unknown panic".to_string())??;
+
+        Ok(match node_value_index.output_index {
+            None => node_value.0,
+            Some(output_index) => node_value.1.remove(output_index as usize),
+        })
+    }
+
     pub async fn clear_cache(&self) {
         self.cache.clear().await;
     }
-}
 
-#[async_trait::async_trait]
-impl VegaFusionRuntimeTrait for VegaFusionRuntime {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    async fn query_request(
+    async fn request_impl(
         &self,
         task_graph: Arc<TaskGraph>,
         indices: &[NodeValueIndex],
         inline_datasets: &HashMap<String, VegaFusionDataset>,
+        use_plan: bool,
     ) -> Result<Vec<NamedTaskValue>> {
         // Clone task_graph and task_graph_runtime for use in closure
         let task_graph_runtime = self.clone();
@@ -115,10 +140,17 @@ impl VegaFusionRuntimeTrait for VegaFusionRuntime {
                 let task_graph = task_graph.clone();
 
                 Ok(async move {
-                    let value = task_graph_runtime
-                        .clone()
-                        .get_node_value(task_graph, node_value_index, inline_datasets.clone())
-                        .await?;
+                    let value = if use_plan {
+                        task_graph_runtime
+                            .clone()
+                            .get_node_plan(task_graph, node_value_index, inline_datasets.clone())
+                            .await?
+                    } else {
+                        task_graph_runtime
+                            .clone()
+                            .get_node_value(task_graph, node_value_index, inline_datasets.clone())
+                            .await?
+                    };
 
                     Ok::<_, VegaFusionError>(NamedTaskValue {
                         variable,
@@ -133,14 +165,50 @@ impl VegaFusionRuntimeTrait for VegaFusionRuntime {
     }
 }
 
+#[async_trait::async_trait]
+impl VegaFusionRuntimeTrait for VegaFusionRuntime {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    async fn query_request(
+        &self,
+        task_graph: Arc<TaskGraph>,
+        indices: &[NodeValueIndex],
+        inline_datasets: &HashMap<String, VegaFusionDataset>,
+    ) -> Result<Vec<NamedTaskValue>> {
+        self.request_impl(task_graph, indices, inline_datasets, false).await
+    }
+
+    async fn plan_request(
+        &self,
+        task_graph: Arc<TaskGraph>,
+        indices: &[NodeValueIndex],
+        inline_datasets: &HashMap<String, VegaFusionDataset>,
+    ) -> Result<Vec<NamedTaskValue>> {
+        self.request_impl(task_graph, indices, inline_datasets, true).await
+    }
+}
+
 #[async_recursion]
-async fn get_or_compute_node_value(
+async fn get_or_compute_node_value_generic<F, Fut>(
     task_graph: Arc<TaskGraph>,
     node_index: usize,
     cache: VegaFusionCache,
     inline_datasets: HashMap<String, VegaFusionDataset>,
     ctx: Arc<SessionContext>,
-) -> Result<CacheValue> {
+    task_executor: F,
+) -> Result<CacheValue>
+where
+    F: Fn(
+        Task,
+        Vec<TaskValue>,
+        Option<RuntimeTzConfig>,
+        HashMap<String, VegaFusionDataset>,
+        Arc<SessionContext>,
+    ) -> Fut + Send + Sync + Clone + 'static,
+    Fut: std::future::Future<Output = Result<(TaskValue, Vec<TaskValue>)>> + Send + 'static,
+{
     // Get the cache key for requested node
     let node = task_graph.node(node_index).unwrap();
     let task = node.task();
@@ -161,17 +229,19 @@ async fn get_or_compute_node_value(
 
         let cache_key = node.state_fingerprint;
         let cloned_cache = cache.clone();
+        let task_executor = task_executor.clone();
 
         let fut = async move {
             // Create future to compute node value (will only be executed if not present in cache)
             let mut inputs_futures = Vec::new();
             for input_node_index in input_node_indexes {
-                let node_fut = get_or_compute_node_value(
+                let node_fut = get_or_compute_node_value_generic(
                     task_graph.clone(),
                     input_node_index,
                     cloned_cache.clone(),
                     inline_datasets.clone(),
                     ctx.clone(),
+                    task_executor.clone(),
                 );
 
                 cfg_if! {
@@ -219,13 +289,52 @@ async fn get_or_compute_node_value(
                 })
                 .collect::<Result<Vec<_>>>()?;
 
-            task.eval(&input_values, &tz_config, inline_datasets, ctx)
-                .await
+            task_executor(task, input_values, tz_config, inline_datasets, ctx).await
         };
 
         // get or construct from cache
         cache.get_or_try_insert_with(cache_key, fut).await
     }
+}
+
+#[async_recursion]
+async fn get_or_compute_node_value(
+    task_graph: Arc<TaskGraph>,
+    node_index: usize,
+    cache: VegaFusionCache,
+    inline_datasets: HashMap<String, VegaFusionDataset>,
+    ctx: Arc<SessionContext>,
+) -> Result<CacheValue> {
+    get_or_compute_node_value_generic(
+        task_graph,
+        node_index,
+        cache,
+        inline_datasets,
+        ctx,
+        |task, input_values, tz_config, inline_datasets, ctx| async move {
+            task.eval(&input_values, &tz_config, inline_datasets, ctx).await
+        },
+    ).await
+}
+
+#[async_recursion]
+async fn get_or_compute_node_value_plan(
+    task_graph: Arc<TaskGraph>,
+    node_index: usize,
+    cache: VegaFusionCache,
+    inline_datasets: HashMap<String, VegaFusionDataset>,
+    ctx: Arc<SessionContext>,
+) -> Result<CacheValue> {
+    get_or_compute_node_value_generic(
+        task_graph,
+        node_index,
+        cache,
+        inline_datasets,
+        ctx,
+        |task, input_values, tz_config, inline_datasets, ctx| async move {
+            task.plan(&input_values, &tz_config, inline_datasets, ctx).await
+        },
+    ).await
 }
 
 pub async fn decode_inline_datasets(

@@ -30,9 +30,9 @@ use vegafusion_core::proto::gen::tasks::scan_url_format;
 use vegafusion_core::proto::gen::tasks::scan_url_format::Parse;
 use vegafusion_core::proto::gen::tasks::{DataSourceTask, DataUrlTask, DataValuesTask};
 use vegafusion_core::task_graph::task::{InputVariable, TaskDependencies};
-use vegafusion_core::task_graph::task_value::{TaskValue, TaskPlan};
+use vegafusion_core::task_graph::task_value::{TaskValue};
+use vegafusion_core::data::util::{DataFrameUtils, SessionContextUtils};
 
-use crate::data::util::{DataFrameUtils, SessionContextUtils};
 use crate::transform::utils::str_to_timestamp;
 
 use object_store::ObjectStore;
@@ -59,14 +59,15 @@ use {datafusion::prelude::ParquetReadOptions, vegafusion_common::error::ToExtern
 #[cfg(target_arch = "wasm32")]
 use object_store_wasm::HttpStore;
 
-pub fn build_compilation_config(
+pub async fn build_compilation_config(
     input_vars: &[InputVariable],
     values: &[TaskValue],
     tz_config: &Option<RuntimeTzConfig>,
-) -> CompilationConfig {
+    ctx: Arc<SessionContext>,
+) -> Result<CompilationConfig> {
     // Build compilation config from input_vals
     let mut signal_scope: HashMap<String, ScalarValue> = HashMap::new();
-    let mut data_scope: HashMap<String, VegaFusionTable> = HashMap::new();
+    let mut data_scope: HashMap<String, DataFrame> = HashMap::new();
 
     for (input_var, input_val) in input_vars.iter().zip(values) {
         match input_val {
@@ -74,19 +75,24 @@ pub fn build_compilation_config(
                 signal_scope.insert(input_var.var.name.clone(), value.clone());
             }
             TaskValue::Table(table) => {
-                data_scope.insert(input_var.var.name.clone(), table.clone());
+                let table_with_ordering = table.clone().with_ordering()?;
+                let df = ctx.vegafusion_table(table_with_ordering).await?;
+                data_scope.insert(input_var.var.name.clone(), df);
+            }
+            TaskValue::DataFrame(df) => {
+                data_scope.insert(input_var.var.name.clone(), df.clone());
             }
         }
     }
 
     // CompilationConfig is not Send, so use local scope here to make sure it's dropped
     // before the call to await below.
-    CompilationConfig {
+    Ok(CompilationConfig {
         signal_scope,
         data_scope,
         tz_config: *tz_config,
         ..Default::default()
-    }
+    })
 }
 
 #[async_trait]
@@ -98,7 +104,7 @@ impl TaskCall for DataUrlTask {
         inline_datasets: HashMap<String, VegaFusionDataset>,
         ctx: Arc<SessionContext>,
     ) -> Result<(TaskValue, Vec<TaskValue>)> {
-        let (df, config) = load_data_url_task_dataframe(self, values, tz_config, inline_datasets, ctx).await?;
+        let (df, config) = load_data_url_task_dataframe(self, values, tz_config, inline_datasets, ctx.clone()).await?;
 
         // Apply transforms (if any)
         let (transformed_df, output_values) = if self.pipeline
@@ -107,7 +113,7 @@ impl TaskCall for DataUrlTask {
             .unwrap_or(false)
         {
             let pipeline = self.pipeline.as_ref().unwrap();
-            pipeline.eval_sql(df, &config).await?
+            pipeline.eval_sql(df, &config, &ctx).await?
         } else {
             // No transforms, just remove any ordering column
             (
@@ -127,25 +133,25 @@ impl TaskCall for DataUrlTask {
         tz_config: &Option<RuntimeTzConfig>,
         inline_datasets: HashMap<String, VegaFusionDataset>,
         ctx: Arc<SessionContext>,
-    ) -> Result<(TaskPlan, Vec<TaskValue>)> {
-        let (df, config) = load_data_url_task_dataframe(self, values, tz_config, inline_datasets, ctx).await?;
+    ) -> Result<(TaskValue, Vec<TaskValue>)> {
+        let (df, config) = load_data_url_task_dataframe(self, values, tz_config, inline_datasets, ctx.clone()).await?;
 
         // Apply transforms (if any)
-        let (logical_plan, output_values) = if self.pipeline
+        let (df, output_values) = if self.pipeline
             .as_ref()
             .map(|p| !p.transforms.is_empty())
             .unwrap_or(false)
         {
             let pipeline = self.pipeline.as_ref().unwrap();
-            pipeline.eval_to_logical_plan(df, &config).await?
+            pipeline.eval_to_df(df, &config, &ctx).await?
         } else {
             // No transforms, just get the logical plan
-            (df.logical_plan().clone(), Vec::new())
+            (df.clone(), Vec::new())
         };
 
-        let task_plan = TaskPlan::Plan(logical_plan);
+        let task_value = TaskValue::DataFrame(df);
 
-        Ok((task_plan, output_values))
+        Ok((task_value, output_values))
     }
 }
 
@@ -157,7 +163,7 @@ async fn load_data_url_task_dataframe(
     ctx: Arc<SessionContext>,
 ) -> Result<(DataFrame, CompilationConfig)> {
     // Build compilation config for url signal (if any) and transforms (if any)
-    let config = build_compilation_config(&data_url_task.input_vars(), values, tz_config);
+    let config = build_compilation_config(&data_url_task.input_vars(), values, tz_config, ctx.clone()).await?;
 
     // Build url string
     let url = match data_url_task.url.as_ref().unwrap() {
@@ -556,13 +562,13 @@ impl TaskCall for DataValuesTask {
         {
             let pipeline = self.pipeline.as_ref().unwrap();
 
-            let config = build_compilation_config(&self.input_vars(), values, tz_config);
+            let config = build_compilation_config(&self.input_vars(), values, tz_config, ctx.clone()).await?;
 
             // Process datetime columns
             let df = ctx.vegafusion_table(values_table).await?;
             let sql_df = process_datetimes(&parse, df, &config.tz_config).await?;
 
-            let (table, output_values) = pipeline.eval_sql(sql_df, &config).await?;
+            let (table, output_values) = pipeline.eval_sql(sql_df, &config, &ctx).await?;
 
             (table, output_values)
         } else {
@@ -583,7 +589,7 @@ impl TaskCall for DataValuesTask {
         _tz_config: &Option<RuntimeTzConfig>,
         _inline_datasets: HashMap<String, VegaFusionDataset>,
         _ctx: Arc<SessionContext>,
-    ) -> Result<(TaskPlan, Vec<TaskValue>)> {
+    ) -> Result<(TaskValue, Vec<TaskValue>)> {
         Err(VegaFusionError::internal("DataValuesTask plan method not yet implemented"))
     }
 }
@@ -598,18 +604,15 @@ impl TaskCall for DataSourceTask {
         ctx: Arc<SessionContext>,
     ) -> Result<(TaskValue, Vec<TaskValue>)> {
         let input_vars = self.input_vars();
-        let mut config = build_compilation_config(&input_vars, values, tz_config);
+        let mut config = build_compilation_config(&input_vars, values, tz_config, ctx.clone()).await?;
 
         // Remove source table from config
-        let source_table = config.data_scope.remove(&self.source).with_context(|| {
+        let source_df = config.data_scope.remove(&self.source).with_context(|| {
             format!(
                 "Missing source {} for task with input variables\n{:#?}",
                 self.source, input_vars
             )
         })?;
-
-        // Add ordering column
-        let source_table = source_table.with_ordering()?;
 
         // Apply transforms (if any)
         let (transformed_table, output_values) = if self
@@ -619,13 +622,12 @@ impl TaskCall for DataSourceTask {
             .unwrap_or(false)
         {
             let pipeline = self.pipeline.as_ref().unwrap();
-            let sql_df = ctx.vegafusion_table(source_table).await?;
-            let (table, output_values) = pipeline.eval_sql(sql_df, &config).await?;
+            let (table, output_values) = pipeline.eval_sql(source_df, &config, &ctx).await?;
 
             (table, output_values)
         } else {
             // No transforms
-            (source_table, Vec::new())
+            (source_df.collect_to_table().await?, Vec::new())
         };
 
         let table_value = TaskValue::Table(transformed_table.without_ordering()?);
@@ -634,12 +636,40 @@ impl TaskCall for DataSourceTask {
 
     async fn plan(
         &self,
-        _values: &[TaskValue],
-        _tz_config: &Option<RuntimeTzConfig>,
-        _inline_datasets: HashMap<String, VegaFusionDataset>,
-        _ctx: Arc<SessionContext>,
-    ) -> Result<(TaskPlan, Vec<TaskValue>)> {
-        Err(VegaFusionError::internal("DataSourceTask plan method not yet implemented"))
+        values: &[TaskValue],
+        tz_config: &Option<RuntimeTzConfig>,
+        inline_datasets: HashMap<String, VegaFusionDataset>,
+        ctx: Arc<SessionContext>,
+    ) -> Result<(TaskValue, Vec<TaskValue>)> {
+        let input_vars = self.input_vars();
+        let mut config = build_compilation_config(&input_vars, values, tz_config, ctx.clone()).await?;
+
+        // Remove source table from config
+        let source_df = config.data_scope.remove(&self.source).with_context(|| {
+            format!(
+                "Missing source {} for task with input variables\n{:#?}",
+                self.source, input_vars
+            )
+        })?;
+
+        // Apply transforms (if any)
+        let (df, output_values) = if self
+            .pipeline
+            .as_ref()
+            .map(|p| !p.transforms.is_empty())
+            .unwrap_or(false)
+        {
+            let pipeline = self.pipeline.as_ref().unwrap();
+            let (df, output_values) = pipeline.eval_to_df(source_df, &config, &ctx).await?;
+
+            (df, output_values)
+        } else {
+            // No transforms
+            (source_df, Vec::new())
+        };
+
+        let task_value = TaskValue::DataFrame(df);
+        Ok((task_value, output_values))
     }
 }
 

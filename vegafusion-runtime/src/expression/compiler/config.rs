@@ -1,14 +1,14 @@
 use crate::expression::compiler::call::{default_callables, VegaFusionCallable};
 use crate::task_graph::timezone::RuntimeTzConfig;
+use datafusion::prelude::DataFrame;
 use num_traits::float::FloatConst;
 use std::collections::HashMap;
-use vegafusion_common::data::table::VegaFusionTable;
 use vegafusion_common::datafusion_common::ScalarValue;
 
 #[derive(Clone)]
 pub struct CompilationConfig {
     pub signal_scope: HashMap<String, ScalarValue>,
-    pub data_scope: HashMap<String, VegaFusionTable>,
+    pub data_scope: HashMap<String, DataFrame>,
     pub callable_scope: HashMap<String, VegaFusionCallable>,
     pub constants: HashMap<String, ScalarValue>,
     pub tz_config: Option<RuntimeTzConfig>,

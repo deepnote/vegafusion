@@ -56,9 +56,19 @@ path = "../vegafusion-common"
 features = ["json", "sqlparser"]
 version = "2.0.2"
 
+[dependencies.datafusion]
+workspace = true
+default-features = false
+
 [dependencies.datafusion-common]
 workspace = true
 default-features = false
+
+[dependencies.datafusion-expr]
+workspace = true
+
+[dependencies.datafusion-functions-window]
+workspace = true
 
 [dependencies.pyo3]
 workspace = true

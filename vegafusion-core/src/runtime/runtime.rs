@@ -1,5 +1,6 @@
 use std::{any::Any, collections::HashMap, sync::Arc};
 
+use crate::data::util::DataFrameUtils;
 use crate::proto::gen::pretransform::pre_transform_values_warning::WarningType as ValuesWarningType;
 use crate::{
     data::dataset::VegaFusionDataset,
@@ -24,6 +25,7 @@ use crate::{
     },
 };
 use async_trait::async_trait;
+use datafusion_expr::LogicalPlan;
 use vegafusion_common::{
     data::table::VegaFusionTable,
     error::{Result, ResultWithContext, VegaFusionError},
@@ -36,11 +38,25 @@ pub struct PreTransformExtractTable {
     pub table: VegaFusionTable,
 }
 
+#[derive(Clone, Debug)]
+pub struct PreTransformLogicalPlan {
+    pub name: String,
+    pub scope: Vec<u32>,
+    pub plan: LogicalPlan,
+}
+
 #[async_trait]
 pub trait VegaFusionRuntimeTrait: Send + Sync {
     fn as_any(&self) -> &dyn Any;
 
     async fn query_request(
+        &self,
+        task_graph: Arc<TaskGraph>,
+        indices: &[NodeValueIndex],
+        inline_datasets: &HashMap<String, VegaFusionDataset>,
+    ) -> Result<Vec<NamedTaskValue>>;
+
+    async fn plan_request(
         &self,
         task_graph: Arc<TaskGraph>,
         indices: &[NodeValueIndex],
@@ -95,6 +111,66 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
             .query_request(task_graph.clone(), &indices, inline_datasets)
             .await
             .with_context(|| "Failed to query node values")?;
+
+        for (var, response_value) in plan.comm_plan.server_to_client.iter().zip(response_values) {
+            init.push(ExportUpdateArrow {
+                namespace: ExportUpdateNamespace::try_from(var.0.namespace()).unwrap(),
+                name: var.0.name.clone(),
+                scope: var.1.clone(),
+                value: response_value.value,
+            });
+        }
+        Ok((plan, init))
+    }
+
+    async fn pre_transform_spec_plan_plan(
+        &self,
+        spec: &ChartSpec,
+        local_tz: &str,
+        default_input_tz: &Option<String>,
+        preserve_interactivity: bool,
+        inline_datasets: &HashMap<String, VegaFusionDataset>,
+        keep_variables: Vec<ScopedVariable>,
+    ) -> Result<(SpecPlan, Vec<ExportUpdateArrow>)> {
+        // Create spec plan
+        let plan = SpecPlan::try_new(
+            spec,
+            &PlannerConfig::pre_transformed_spec_config(preserve_interactivity, keep_variables),
+        )?;
+
+        // Extract inline dataset fingerprints
+        let dataset_fingerprints = inline_datasets
+            .iter()
+            .map(|(k, ds)| (k.clone(), ds.fingerprint()))
+            .collect::<HashMap<_, _>>();
+
+        // Create task graph for server spec
+        let tz_config = TzConfig {
+            local_tz: local_tz.to_string(),
+            default_input_tz: default_input_tz.clone(),
+        };
+        let task_scope = plan.server_spec.to_task_scope().unwrap();
+        let tasks = plan
+            .server_spec
+            .to_tasks(&tz_config, &dataset_fingerprints)
+            .unwrap();
+        let task_graph = TaskGraph::new(tasks, &task_scope).unwrap();
+        let task_graph_mapping = task_graph.build_mapping();
+
+        // Gather values of server-to-client values
+        let mut init = Vec::new();
+        let task_graph = Arc::new(task_graph);
+        let indices: Vec<NodeValueIndex> = plan
+            .comm_plan
+            .server_to_client
+            .iter()
+            .filter_map(|var| task_graph_mapping.get(var).cloned())
+            .collect();
+
+        let response_values = self
+            .plan_request(task_graph.clone(), &indices, inline_datasets)
+            .await
+            .with_context(|| "Failed to query node plan")?;
 
         for (var, response_value) in plan.comm_plan.server_to_client.iter().zip(response_values) {
             init.push(ExportUpdateArrow {
@@ -199,7 +275,15 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
                     if let Some(input_values) = input_values {
                         // Set inline value
                         data.values = Some(input_values);
-                    } else if let TaskValue::Table(table) = export_update.value {
+                    } else {
+                        let table = match export_update.value {
+                            TaskValue::Table(table) => table,
+                            TaskValue::DataFrame(df) => df.collect_to_table().await?,
+                            _ => return Err(VegaFusionError::internal(
+                                "Expected Data TaskValue to be a Table or DataFrame",
+                            )),
+                        };
+                        
                         if table.num_rows() <= extract_threshold {
                             // Inline small tables
                             data.values = Some(table.to_json()?);
@@ -211,10 +295,6 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
                                 table,
                             });
                         }
-                    } else {
-                        return Err(VegaFusionError::internal(
-                            "Expected Data TaskValue to be an Table",
-                        ));
                     }
                 }
             }
@@ -236,6 +316,98 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
                 )),
             });
         }
+
+        Ok((spec, datasets, warnings))
+    }
+
+    async fn pre_transform_logical_plan(
+        &self,
+        spec: &ChartSpec,
+        inline_datasets: &HashMap<String, VegaFusionDataset>,
+        options: &PreTransformExtractOpts,
+    ) -> Result<(
+        ChartSpec,
+        Vec<PreTransformLogicalPlan>,
+        Vec<PreTransformExtractWarning>,
+    )> {
+        let input_spec = spec;
+        let keep_variables: Vec<ScopedVariable> = options
+            .keep_variables
+            .clone()
+            .into_iter()
+            .map(|var| (var.variable.unwrap(), var.scope))
+            .collect();
+
+        let (plan, init) = self
+            .pre_transform_spec_plan_plan(
+                spec,
+                &options.local_tz,
+                &options.default_input_tz,
+                options.preserve_interactivity,
+                inline_datasets,
+                keep_variables,
+            )
+            .await?;
+
+        // Update client spec with server values
+        let mut spec = plan.client_spec.clone();
+        let mut datasets: Vec<PreTransformLogicalPlan> = Vec::new();
+
+        for export_update in init {
+            let scope = export_update.scope.clone();
+            let name = export_update.name.as_str();
+            match export_update.namespace {
+                ExportUpdateNamespace::Signal => {
+                    // Always inline signal values
+                    let signal = spec.get_nested_signal_mut(&scope, name)?;
+                    signal.value = MissingNullOrValue::Value(export_update.value.to_json()?);
+                }
+                ExportUpdateNamespace::Data => {
+                    let data = spec.get_nested_data_mut(&scope, name)?;
+
+                    // If the input dataset includes inline values and no transforms,
+                    // copy the input JSON directly to avoid the case where round-tripping
+                    // through Arrow homogenizes mixed type arrays.
+                    // E.g. round tripping may turn [1, "two"] into ["1", "two"]
+                    let input_values =
+                        input_spec
+                            .get_nested_data(&scope, name)
+                            .ok()
+                            .and_then(|data| {
+                                if data.transform.is_empty() {
+                                    data.values.clone()
+                                } else {
+                                    None
+                                }
+                            });
+                    if let Some(input_values) = input_values {
+                        // Set inline value
+                        data.values = Some(input_values);
+                    } else {
+                        let plan = match export_update.value {
+                            TaskValue::DataFrame(df) => df.logical_plan().clone(),
+                            _ => return Err(VegaFusionError::internal(
+                                "Expected Data TaskValue to be a DataFrame",
+                            )),
+                        };
+                        
+                        datasets.push(PreTransformLogicalPlan {
+                            name: export_update.name,
+                            scope: export_update.scope,
+                            plan,
+                        });
+                    }
+                }
+            }
+        }
+
+        // Destringify datetime strings in selection store datasets
+        destringify_selection_datetimes(&mut spec)?;
+
+        // Build warnings
+        let mut warnings: Vec<PreTransformExtractWarning> = Vec::new();
+
+        // TODO: check for warnings
 
         Ok((spec, datasets, warnings))
     }

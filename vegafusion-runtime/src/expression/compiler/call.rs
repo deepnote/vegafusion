@@ -31,6 +31,7 @@ use crate::expression::compiler::builtin_functions::type_coercion::to_string::to
 use crate::expression::compiler::compile;
 use crate::expression::compiler::config::CompilationConfig;
 use crate::task_graph::timezone::RuntimeTzConfig;
+use crate::tokio_runtime::TOKIO_RUNTIME;
 use datafusion_expr::{expr, Expr, ScalarUDF};
 use datafusion_functions::expr_fn::isnan;
 use datafusion_functions::math::{
@@ -44,6 +45,7 @@ use vegafusion_common::data::table::VegaFusionTable;
 use vegafusion_common::datafusion_common::DFSchema;
 use vegafusion_common::datatypes::cast_to;
 use vegafusion_common::error::{Result, ResultWithContext, VegaFusionError};
+use vegafusion_core::data::util::DataFrameUtils;
 use vegafusion_core::proto::gen::expression::{
     expression, literal, CallExpression, Expression, Literal,
 };
@@ -148,7 +150,13 @@ pub fn compile_call(
                                 .tz_config
                                 .with_context(|| "No local timezone info provided".to_string())?;
 
-                            callee(dataset, &node.arguments[1..], schema, &tz_config)
+                            // TODO: convertion to table is async, but we can't make this function async as it will
+                            // require too much changes. Instead we block on async function, which is far from ideal
+                            // but is fine for now
+                            let table = TOKIO_RUNTIME.block_on(dataset.clone().collect_to_table())
+                                .with_context(|| "Failed to convert DataFrame to VegaFusionTable")?;
+                            
+                            callee(&table, &node.arguments[1..], schema, &tz_config)
                         } else {
                             Err(VegaFusionError::internal(format!(
                                 "No dataset named {}. Available: {:?}",

@@ -12,15 +12,16 @@ use crate::task_graph::timezone::RuntimeTzConfig;
 use vegafusion_core::error::Result;
 use vegafusion_core::proto::gen::tasks::SignalTask;
 use vegafusion_core::task_graph::task::TaskDependencies;
-use vegafusion_core::task_graph::task_value::{TaskValue, TaskPlan};
+use vegafusion_core::task_graph::task_value::{TaskValue};
 use datafusion_common::ScalarValue;
 
 async fn eval_signal_to_scalar_value(
     signal_task: &SignalTask,
     values: &[TaskValue],
     tz_config: &Option<RuntimeTzConfig>,
+    ctx: Arc<SessionContext>,
 ) -> Result<ScalarValue> {
-    let config = build_compilation_config(&signal_task.input_vars(), values, tz_config);
+    let config = build_compilation_config(&signal_task.input_vars(), values, tz_config, ctx).await?;
     let expression = signal_task.expr.as_ref().unwrap();
     let expr = compile(expression, &config, None)?;
     expr.eval_to_scalar()
@@ -33,9 +34,9 @@ impl TaskCall for SignalTask {
         values: &[TaskValue],
         tz_config: &Option<RuntimeTzConfig>,
         _inline_datasets: HashMap<String, VegaFusionDataset>,
-        _ctx: Arc<SessionContext>,
+        ctx: Arc<SessionContext>,
     ) -> Result<(TaskValue, Vec<TaskValue>)> {
-        let value = eval_signal_to_scalar_value(self, values, tz_config).await?;
+        let value = eval_signal_to_scalar_value(self, values, tz_config, ctx).await?;
         let task_value = TaskValue::Scalar(value);
         Ok((task_value, Default::default()))
     }
@@ -45,10 +46,10 @@ impl TaskCall for SignalTask {
         values: &[TaskValue],
         tz_config: &Option<RuntimeTzConfig>,
         _inline_datasets: HashMap<String, VegaFusionDataset>,
-        _ctx: Arc<SessionContext>,
-    ) -> Result<(TaskPlan, Vec<TaskValue>)> {
-        let value = eval_signal_to_scalar_value(self, values, tz_config).await?;
-        let task_plan = TaskPlan::Scalar(value);
-        Ok((task_plan, Default::default()))
+        ctx: Arc<SessionContext>,
+    ) -> Result<(TaskValue, Vec<TaskValue>)> {
+        let value = eval_signal_to_scalar_value(self, values, tz_config, ctx).await?;
+        let task_value = TaskValue::Scalar(value);
+        Ok((task_value, Default::default()))
     }
 }
