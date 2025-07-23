@@ -726,6 +726,85 @@ class VegaFusionRuntime:
 
         return new_spec, datasets, warnings
 
+    def pre_transform_logical_plan(
+        self,
+        spec: dict[str, Any] | str,
+        local_tz: str | None = None,
+        default_input_tz: str | None = None,
+        preserve_interactivity: bool = True,
+        inline_dataset_schemas: dict[str, Any] | None = None,
+        keep_signals: list[str | tuple[str, list[int]]] | None = None,
+        keep_datasets: list[str | tuple[str, list[int]]] | None = None,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]], list[PreTransformWarning]]:
+        """
+        TODO: verify that this docstring is correct
+        Evaluate supported transforms in an input Vega specification using logical plans.
+
+        This method accepts dataset schemas instead of actual data, allowing for 
+        planning and optimization without materializing the data.
+
+        Args:
+            spec: A Vega specification dict or JSON string.
+            local_tz: Name of timezone to be considered local. E.g. 'America/New_York'.
+                Defaults to the value of vf.get_local_tz(), which defaults to the system
+                timezone if one can be determined.
+            default_input_tz: Name of timezone (e.g. 'America/New_York') that naive
+                datetime strings should be interpreted in. Defaults to `local_tz`.
+            preserve_interactivity: If True (default) then the interactive behavior of
+                the chart will be preserved. This requires that all the data that
+                participates in interactions be included in the resulting spec rather
+                than being pre-transformed. If False, then all possible data
+                transformations are applied even if they break the original interactive
+                behavior of the chart.
+            inline_dataset_schemas: A dict from dataset names to Arrow schemas.
+                Inline datasets may be referenced by the input specification
+                using the following url syntax 'vegafusion+dataset://{dataset_name}' or
+                'table://{dataset_name}'.
+            keep_signals: Signals from the input spec that must be included in the
+                pre-transformed spec, even if they are no longer referenced.
+                A list with elements that are either:
+
+                * The name of a top-level signal as a string
+                * A two-element tuple where the first element is the name of a signal
+                  as a string and the second element is the nested scope of the dataset
+                  as a list of integers
+            keep_datasets: Datasets from the input spec that must be included in the
+                pre-transformed spec even if they are no longer referenced.
+                A list with elements that are either:
+
+                * The name of a top-level dataset as a string
+                * A two-element tuple where the first element is the name of a dataset
+                  as a string and the second element is the nested scope of the dataset
+                  as a list of integers
+
+        Returns:
+            tuple[dict[str, Any], list[dict[str, Any]], list[PreTransformWarning]]:
+            Three-element tuple of
+
+            * The Vega specification as a dict with pre-transformed datasets
+              included but left empty.
+            * Export updates as a list of dictionaries with keys:
+              * `"name"`: dataset name
+              * `"logical_plan"`: json representation of LogicalPlan (when applicable)
+              * `"data"`: materialized data (when applicable)
+            * A list of warnings as dictionaries. Each warning dict has a ``'type'``
+              key indicating the warning type, and a ``'message'`` key containing
+              a description of the warning.
+        """
+        local_tz = local_tz or get_local_tz()
+
+        new_spec, export_updates, warnings = self.runtime.pre_transform_logical_plan(
+            spec,
+            inline_dataset_schemas or {},
+            local_tz=local_tz,
+            default_input_tz=default_input_tz,
+            preserve_interactivity=preserve_interactivity,
+            keep_signals=parse_variables(keep_signals),
+            keep_datasets=parse_variables(keep_datasets),
+        )
+
+        return new_spec, export_updates, warnings
+
     @property
     def worker_threads(self) -> int | None:
         """

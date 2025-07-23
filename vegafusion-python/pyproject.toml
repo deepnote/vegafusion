@@ -30,6 +30,7 @@ Documentation = "https://vegafusion.io"
 
 [project.optional-dependencies]
 embed = []
+datafusion = ["datafusion>=48.0.0,<49.0.0"]
 
 [tool.maturin]
 module-name = "vegafusion._vegafusion"

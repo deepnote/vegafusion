@@ -7,7 +7,7 @@ use crate::{
         apply_pre_transform::apply_pre_transform_datasets,
         destringify_selection_datetimes::destringify_selection_datetimes,
         plan::{PlannerConfig, SpecPlan},
-        watch::{ExportUpdateArrow, ExportUpdateNamespace},
+        watch::{ExportUpdateArrow, ExportUpdate, ExportUpdateNamespace},
     },
     proto::gen::{
         pretransform::{
@@ -25,6 +25,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use vegafusion_common::{
+    arrow::datatypes::SchemaRef,
     data::table::VegaFusionTable,
     error::{Result, ResultWithContext, VegaFusionError},
 };
@@ -47,6 +48,24 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
         inline_datasets: &HashMap<String, VegaFusionDataset>,
     ) -> Result<Vec<NamedTaskValue>>;
 
+    async fn materialize_export_updates(
+        &self,
+        export_updates: Vec<ExportUpdate>,
+    ) -> Result<Vec<ExportUpdateArrow>> {
+        let mut result = Vec::new();
+        for export_update in export_updates {
+            let materialized_value = export_update.value.ensure_materialized()?;
+            result.push(ExportUpdateArrow {
+                namespace: export_update.namespace,
+                name: export_update.name,
+                scope: export_update.scope,
+                value: materialized_value,
+            });
+        }
+        Ok(result)
+    }
+
+
     async fn pre_transform_spec_plan(
         &self,
         spec: &ChartSpec,
@@ -55,7 +74,7 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
         preserve_interactivity: bool,
         inline_datasets: &HashMap<String, VegaFusionDataset>,
         keep_variables: Vec<ScopedVariable>,
-    ) -> Result<(SpecPlan, Vec<ExportUpdateArrow>)> {
+    ) -> Result<(SpecPlan, Vec<ExportUpdate>)> {
         // Create spec plan
         let plan = SpecPlan::try_new(
             spec,
@@ -97,7 +116,7 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
             .with_context(|| "Failed to query node values")?;
 
         for (var, response_value) in plan.comm_plan.server_to_client.iter().zip(response_values) {
-            init.push(ExportUpdateArrow {
+            init.push(ExportUpdate {
                 namespace: ExportUpdateNamespace::try_from(var.0.namespace()).unwrap(),
                 name: var.0.name.clone(),
                 scope: var.1.clone(),
@@ -132,7 +151,9 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
             )
             .await?;
 
-        apply_pre_transform_datasets(input_spec, &plan, init, options.row_limit)
+        let init_arrow = self.materialize_export_updates(init).await?;
+
+        apply_pre_transform_datasets(input_spec, &plan, init_arrow, options.row_limit)
     }
 
     async fn pre_transform_extract(
@@ -163,13 +184,14 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
                 keep_variables,
             )
             .await?;
+        let init_arrow = self.materialize_export_updates(init).await?;
 
         // Update client spec with server values
         let mut spec = plan.client_spec.clone();
         let mut datasets: Vec<PreTransformExtractTable> = Vec::new();
         let extract_threshold = options.extract_threshold as usize;
 
-        for export_update in init {
+        for export_update in init_arrow {
             let scope = export_update.scope.clone();
             let name = export_update.name.as_str();
             match export_update.namespace {
@@ -351,6 +373,7 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
         let mut task_values: Vec<TaskValue> = Vec::new();
         let row_limit = options.row_limit.map(|l| l as usize);
         for named_task_value in named_task_values {
+            // TODO: Handle TaskValue::Plan here?
             let value = named_task_value.value;
             let variable = named_task_value.variable;
 
@@ -370,5 +393,62 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
         }
 
         Ok((task_values, warnings))
+    }
+
+    fn create_dataset_from_schema(
+        &self,
+        _name: &str,
+        _schema: SchemaRef,
+    ) -> Result<VegaFusionDataset> {
+        // This is available only in embedded runtime
+        Err(VegaFusionError::internal(
+            "create_dataset_from_schema not implemented for this runtime"
+        ))
+    }
+
+    async fn pre_transform_logical_plan(
+        &self,
+        spec: &ChartSpec,
+        inline_dataset_schemas: HashMap<String, SchemaRef>,
+        local_tz: &str,
+        default_input_tz: &Option<String>,
+        preserve_interactivity: bool,
+        keep_variables: Vec<ScopedVariable>,
+    ) -> Result<(ChartSpec, Vec<ExportUpdate>, Vec<PreTransformSpecWarning>)> {
+        let inline_datasets: HashMap<String, VegaFusionDataset> = inline_dataset_schemas
+            .into_iter()
+            .map(|(name, schema)| {
+                self.create_dataset_from_schema(&name, schema).map(|dataset| (name, dataset))
+            })
+            .collect::<Result<HashMap<_, _>>>()?;
+
+        let (plan, export_updates) = self
+            .pre_transform_spec_plan(
+                spec,
+                local_tz,
+                default_input_tz,
+                preserve_interactivity,
+                &inline_datasets,
+                keep_variables,
+            )
+            .await?;
+
+        // TODO: we have wrong warning type here, we need to create new one PreTransformLogicalPlanWarning
+        // TODO: we're likely missing warnings like unsupported spec or broken interactivity
+        let warnings: Vec<PreTransformSpecWarning> = plan
+            .warnings
+            .iter()
+            .map(|planner_warning| PreTransformSpecWarning {
+                warning_type: Some(
+                    crate::proto::gen::pretransform::pre_transform_spec_warning::WarningType::Planner(
+                        PlannerWarning {
+                            message: planner_warning.message(),
+                        },
+                    ),
+                ),
+            })
+            .collect();
+
+        Ok((plan.client_spec, export_updates, warnings))
     }
 }

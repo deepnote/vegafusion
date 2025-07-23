@@ -68,6 +68,8 @@ version = "1.36.0"
 
 [workspace.dependencies.pyo3]
 version = "0.25.0"
+default-features = true
+features = ["serde"]
 
 [workspace.dependencies.pythonize]
 version = "0.25.0"

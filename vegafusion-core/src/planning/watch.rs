@@ -119,6 +119,18 @@ impl TryFrom<VariableNamespace> for ExportUpdateNamespace {
     }
 }
 
+// ExportUpdate and ExportUpdateArrow, but ExportUpdate.value can be any of TaskValue, while
+// ExportUpdateArrow.value can be only TaskValue::Table and TaskValue::Scalar
+#[derive(Debug, Clone)]
+pub struct ExportUpdate {
+    pub namespace: ExportUpdateNamespace,
+    pub name: String,
+    pub scope: Vec<u32>,
+    pub value: TaskValue,
+}
+
+// TODO: ideally this enum will use MaterializedTaskValue (see vegafusion-runtime/src/data/util.rs) instead of TaskValue
+// to have compile-time guarantees
 #[derive(Debug, Clone)]
 pub struct ExportUpdateArrow {
     pub namespace: ExportUpdateNamespace,

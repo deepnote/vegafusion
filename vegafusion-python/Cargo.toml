@@ -10,7 +10,9 @@ name = "vegafusion"
 crate-type = ["cdylib"]
 
 [features]
+default = ["logical-plan"]
 protobuf-src = ["vegafusion-core/protobuf-src"]
+logical-plan = [] # TODO: this will likely require datafusion-python crate but we can't use it yet due to incompatibilities in versions
 
 [dependencies]
 sysinfo = "0.35.0"

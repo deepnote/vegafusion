@@ -2,6 +2,7 @@ use crate::datafusion::context::make_datafusion_context;
 use crate::task_graph::cache::VegaFusionCache;
 use crate::task_graph::task::TaskCall;
 use crate::task_graph::timezone::RuntimeTzConfig;
+use crate::data::util::TaskValueUtils;
 use async_recursion::async_recursion;
 use cfg_if::cfg_if;
 use datafusion::prelude::SessionContext;
@@ -13,12 +14,17 @@ use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use vegafusion_core::data::dataset::VegaFusionDataset;
 use vegafusion_core::error::{Result, ResultWithContext, VegaFusionError};
+use vegafusion_common::datafusion_expr::LogicalPlanBuilder;
+use datafusion::datasource::provider_as_source;
+use datafusion::datasource::empty::EmptyTable;
+use vegafusion_common::arrow::datatypes::SchemaRef;
 use vegafusion_core::proto::gen::tasks::inline_dataset::Dataset;
 use vegafusion_core::proto::gen::tasks::{
     task::TaskKind, InlineDataset, InlineDatasetTable, NodeValueIndex, TaskGraph,
 };
 use vegafusion_core::runtime::VegaFusionRuntimeTrait;
 use vegafusion_core::task_graph::task_value::{NamedTaskValue, TaskValue};
+use vegafusion_core::planning::watch::{ExportUpdate, ExportUpdateArrow};
 
 #[cfg(feature = "proto")]
 use {
@@ -130,6 +136,41 @@ impl VegaFusionRuntimeTrait for VegaFusionRuntime {
             .collect::<Result<Vec<_>>>()?;
 
         future::try_join_all(response_value_futures).await
+    }
+
+    async fn materialize_export_updates(
+        &self,
+        export_updates: Vec<ExportUpdate>,
+    ) -> Result<Vec<ExportUpdateArrow>> {
+        let materialization_futures: Vec<_> = export_updates
+            .into_iter()
+            .map(|export_update| {
+                let ctx = self.ctx.clone();
+                async move {
+                    let materialized_value = export_update.value.to_materialized(ctx.as_ref()).await?;
+                    Ok::<_, VegaFusionError>(ExportUpdateArrow {
+                        namespace: export_update.namespace,
+                        name: export_update.name,
+                        scope: export_update.scope,
+                        value: materialized_value,
+                    })
+                }
+            })
+            .collect();
+
+        future::try_join_all(materialization_futures).await
+    }
+
+    fn create_dataset_from_schema(
+        &self,
+        name: &str,
+        schema: SchemaRef,
+    ) -> Result<VegaFusionDataset> {
+        let provider = Arc::new(EmptyTable::new(schema.clone()));
+        let table_source = provider_as_source(provider);
+        let logical_plan = LogicalPlanBuilder::scan(name, table_source, None)?.build()?;
+        
+        Ok(VegaFusionDataset::from_plan(logical_plan))
     }
 }
 

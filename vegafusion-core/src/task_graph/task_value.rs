@@ -9,11 +9,21 @@ use vegafusion_common::arrow::record_batch::RecordBatch;
 use vegafusion_common::data::scalar::ScalarValueHelpers;
 use vegafusion_common::data::table::VegaFusionTable;
 use vegafusion_common::error::{Result, ResultWithContext, VegaFusionError};
+use vegafusion_common::datafusion_expr::LogicalPlan;
+
+fn logical_plan_node_count(plan: &LogicalPlan) -> usize {
+    1 + plan
+        .inputs()
+        .iter()
+        .map(|p| logical_plan_node_count(p))
+        .sum::<usize>()
+}
 
 #[derive(Debug, Clone)]
 pub enum TaskValue {
     Scalar(ScalarValue),
     Table(VegaFusionTable),
+    Plan(LogicalPlan),
 }
 
 impl TaskValue {
@@ -31,10 +41,22 @@ impl TaskValue {
         }
     }
 
+    pub fn ensure_materialized(&self) -> Result<TaskValue> {
+        match self {
+            TaskValue::Scalar(_) | TaskValue::Table(_) => Ok(self.clone()),
+            TaskValue::Plan(_) => Err(VegaFusionError::internal(
+                "Cannot use Plan TaskValue as materialized value",
+            )),
+        }
+    }
+
     pub fn to_json(&self) -> Result<Value> {
         match self {
             TaskValue::Scalar(value) => value.to_json(),
             TaskValue::Table(value) => Ok(value.to_json()?),
+            TaskValue::Plan(_) => Err(VegaFusionError::internal(
+                "Cannot serialize Plan variant to JSON",
+            )),
         }
     }
 
@@ -42,6 +64,8 @@ impl TaskValue {
         let inner_size = match self {
             TaskValue::Scalar(scalar) => inner_size_of_scalar(scalar),
             TaskValue::Table(table) => inner_size_of_table(table),
+            // Assume fixed size (256 bytes) for each plan node
+            TaskValue::Plan(plan) => logical_plan_node_count(plan) * 256,
         };
 
         std::mem::size_of::<Self>() + inner_size
@@ -81,6 +105,9 @@ impl TryFrom<&TaskValue> for ProtoTaskValue {
             TaskValue::Table(table) => Ok(Self {
                 data: Some(Data::Table(table.to_ipc_bytes()?)),
             }),
+            TaskValue::Plan(_) => Err(VegaFusionError::internal(
+                "Cannot convert Plan TaskValue to protobuf representation",
+            )),
         }
     }
 }

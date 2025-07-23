@@ -5,6 +5,7 @@ mod util;
 use datafusion_common::ScalarValue;
 use rstest::rstest;
 use serde_json::json;
+use vegafusion_core::data::dataset::VegaFusionDataset;
 use std::collections::HashMap;
 
 use util::check::check_scalar_evaluation;
@@ -40,10 +41,10 @@ pub fn dataset_2() -> VegaFusionTable {
     VegaFusionTable::from_json(&json_value).unwrap()
 }
 
-fn datasets() -> HashMap<String, VegaFusionTable> {
+fn datasets() -> HashMap<String, VegaFusionDataset> {
     vec![
-        ("dataA".to_string(), dataset_1()),
-        ("dataB".to_string(), dataset_2()),
+        ("dataA".to_string(), VegaFusionDataset::from_table(dataset_1(), None).unwrap()),
+        ("dataB".to_string(), VegaFusionDataset::from_table(dataset_2(), None).unwrap()),
     ]
     .into_iter()
     .collect()

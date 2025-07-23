@@ -37,6 +37,11 @@ use vegafusion_runtime::tokio_runtime::TOKIO_THREAD_STACK_SIZE;
 use vegafusion_core::runtime::VegaFusionRuntimeTrait;
 use vegafusion_runtime::task_graph::cache::VegaFusionCache;
 
+use vegafusion_common::arrow::datatypes::SchemaRef;
+use vegafusion_common::data::scalar::ScalarValueHelpers;
+use pyo3_arrow::PySchema;
+use pyo3::types::PyString;
+
 static INIT: Once = Once::new();
 
 pub fn initialize_logging() {
@@ -503,6 +508,118 @@ impl PyVegaFusionRuntime {
 
             Ok((tx_spec.into(), datasets, warnings.into()))
         })
+    }
+
+    #[cfg(feature = "logical-plan")]
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (spec, inline_dataset_schemas, local_tz, default_input_tz=None, preserve_interactivity=None, keep_signals=None, keep_datasets=None))]
+    pub fn pre_transform_logical_plan(
+        &self,
+        py: Python,
+        spec: PyObject,
+        inline_dataset_schemas: Option<&Bound<PyDict>>,
+        local_tz: String,
+        default_input_tz: Option<String>,
+        preserve_interactivity: Option<bool>,
+        keep_signals: Option<Vec<(String, Vec<u32>)>>,
+        keep_datasets: Option<Vec<(String, Vec<u32>)>>,
+    ) -> PyResult<(PyObject, PyObject, PyObject)> {
+        let spec = parse_json_spec(spec)?;
+        let preserve_interactivity = preserve_interactivity.unwrap_or(true);
+
+        let mut schemas: HashMap<String, SchemaRef> = HashMap::new();
+        if let Some(schemas_dict) = inline_dataset_schemas {
+            for (name, schema_obj) in schemas_dict.iter() {
+                let name = name.to_string();
+                let pyschema = schema_obj.extract::<PySchema>()?;
+                let schema = pyschema.into_inner();
+                schemas.insert(name, schema);
+            }
+        }
+
+        let mut keep_variables: Vec<ScopedVariable> = Vec::new();
+        for (name, scope) in keep_signals.unwrap_or_default() {
+            keep_variables.push((Variable::new_signal(&name), scope))
+        }
+        for (name, scope) in keep_datasets.unwrap_or_default() {
+            keep_variables.push((Variable::new_data(&name), scope))
+        }
+
+        let (client_spec, export_updates, warnings) = py.allow_threads(|| {
+            self.tokio_runtime
+                .block_on(self.runtime.pre_transform_logical_plan(
+                    &spec,
+                    schemas,
+                    &local_tz,
+                    &default_input_tz,
+                    preserve_interactivity,
+                    keep_variables,
+                ))
+        })?;
+
+        Python::with_gil(|py| -> PyResult<(PyObject, PyObject, PyObject)> {
+            let py_spec = pythonize::pythonize(py, &client_spec)?;
+            
+            let py_export_list = PyList::empty(py);
+            for export_update in export_updates {
+                let py_export_dict = PyDict::new(py);
+                py_export_dict.set_item("name", export_update.name)?;
+
+                match export_update.value {
+                    TaskValue::Plan(plan) => {
+                        // TODO: we probably want more flexible serialization format than pg_json, but protobuf fails with our memtable
+                        let lp_str = format!("{}", plan.display_pg_json());
+                        py_export_dict.set_item("logical_plan", PyString::new(py, &lp_str))?;
+                    }
+                    TaskValue::Table(table) => {
+                        // Convert table to PyArrow
+                        let pytable = table.to_pyo3_arrow()?.to_pyarrow(py)?;
+                        py_export_dict.set_item("data", pytable)?;
+                    }
+                    TaskValue::Scalar(scalar) => {
+                        // Convert scalar to JSON value
+                        let json_value = scalar.to_json()?;
+                        let py_json_value = pythonize::pythonize(py, &json_value)?;
+                        py_export_dict.set_item("data", py_json_value)?;
+                    }
+                }
+
+                py_export_list.append(py_export_dict)?;
+            }
+
+            // TODO: this is hacky, we need to pass planner warning messages to end user
+            let warnings: Vec<_> = warnings
+                .iter()
+                .map(|warning| PreTransformSpecWarningSpec {
+                    typ: "Planner".to_string(),
+                    message: "Warning occurred during pre-transformation".to_string(),
+                })
+                .collect();
+
+            let py_warnings = pythonize::pythonize(py, &warnings)?;
+
+            Ok((py_spec.into(), py_export_list.into(), py_warnings.into()))
+        })
+    }
+
+    #[cfg(not(feature = "logical-plan"))]
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (_spec, _inline_dataset_schemas, _local_tz, _default_input_tz=None, _preserve_interactivity=None, _keep_signals=None, _keep_datasets=None))]
+    pub fn pre_transform_logical_plan(
+        &self,
+        _py: Python,
+        _spec: PyObject,
+        _inline_dataset_schemas: Option<&Bound<PyDict>>,
+        _local_tz: String,
+        _default_input_tz: Option<String>,
+        _preserve_interactivity: Option<bool>,
+        _keep_signals: Option<Vec<(String, Vec<u32>)>>,
+        _keep_datasets: Option<Vec<(String, Vec<u32>)>>,
+    ) -> PyResult<(PyObject, PyObject, PyObject)> {
+        Err(PyValueError::new_err(
+            "pre_transform_logical_plan requires the 'logical-plan' feature. \
+            Please reinstall vegafusion with logical plan support enabled."
+        ))
     }
 
     pub fn clear_cache(&self) -> PyResult<()> {

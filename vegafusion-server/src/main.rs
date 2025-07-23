@@ -27,6 +27,7 @@ use vegafusion_core::proto::gen::pretransform::{
     PreTransformValuesOpts, PreTransformValuesRequest, PreTransformValuesResponse,
 };
 use vegafusion_runtime::task_graph::cache::VegaFusionCache;
+use vegafusion_runtime::data::util::TaskValueUtils;
 use vegafusion_runtime::tokio_runtime::TOKIO_THREAD_STACK_SIZE;
 
 #[derive(Clone)]
@@ -59,13 +60,25 @@ impl VegaFusionRuntimeGrpc {
                     .await
                 {
                     Ok(response_values) => {
+                        // Materialize all TaskValues before converting to protobuf
+                        let materialized_futures: Vec<_> = response_values
+                            .into_iter()
+                            .map(|named_value| async move {
+                                let materialized_value = named_value.value.to_materialized(self.runtime.ctx.as_ref()).await?;
+                                Ok::<_, VegaFusionError>(vegafusion_core::proto::gen::tasks::ResponseTaskValue {
+                                    variable: Some(named_value.variable),
+                                    scope: named_value.scope,
+                                    value: Some(ProtoTaskValue::try_from(&materialized_value)?),
+                                })
+                            })
+                            .collect();
+                        
+                        let materialized_response_values = futures::future::try_join_all(materialized_futures).await?;
+                        
                         let response_msg = QueryResult {
                             response: Some(query_result::Response::TaskGraphValues(
                                 TaskGraphValueResponse {
-                                    response_values: response_values
-                                        .into_iter()
-                                        .map(|v| v.into())
-                                        .collect::<Vec<_>>(),
+                                    response_values: materialized_response_values,
                                 },
                             )),
                         };
