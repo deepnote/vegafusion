@@ -738,9 +738,10 @@ class VegaFusionRuntime:
     ) -> tuple[dict[str, Any], list[dict[str, Any]], list[PreTransformWarning]]:
         """
         TODO: verify that this docstring is correct
-        Evaluate supported transforms in an input Vega specification using logical plans.
+        Evaluate supported transforms in an input Vega specification using
+        logical plans.
 
-        This method accepts dataset schemas instead of actual data, allowing for 
+        This method accepts dataset schemas instead of actual data, allowing for
         planning and optimization without materializing the data.
 
         Args:

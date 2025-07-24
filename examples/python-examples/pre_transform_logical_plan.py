@@ -10,36 +10,34 @@ import pyarrow as pa
 # spec with supported transforms pre-evaluated.
 def main():
     spec = get_spec()
-    schema = pa.schema([
-        pa.field("Title",                  pa.string()),
-        pa.field("US Gross",               pa.int64()),
-        pa.field("Worldwide Gross",        pa.int64()),
-        pa.field("US DVD Sales",           pa.int64()),
-        pa.field("Production Budget",      pa.int64()),
-        pa.field("Release Date",           pa.date32()),
-        pa.field("MPAA Rating",            pa.string()),
-        pa.field("Running Time min",       pa.int32()),
-        pa.field("Distributor",            pa.string()),
-        pa.field("Source",                 pa.string()),
-        pa.field("Major Genre",            pa.string()),
-        pa.field("Creative Type",          pa.string()),
-        pa.field("Director",               pa.string()),
-        pa.field("Rotten Tomatoes Rating", pa.int8()),
-        pa.field("IMDB Rating",            pa.float32()),
-        pa.field("IMDB Votes",             pa.int64())
-    ])
+    schema = pa.schema(
+        [
+            pa.field("Title", pa.string()),
+            pa.field("US Gross", pa.int64()),
+            pa.field("Worldwide Gross", pa.int64()),
+            pa.field("US DVD Sales", pa.int64()),
+            pa.field("Production Budget", pa.int64()),
+            pa.field("Release Date", pa.date32()),
+            pa.field("MPAA Rating", pa.string()),
+            pa.field("Running Time min", pa.int32()),
+            pa.field("Distributor", pa.string()),
+            pa.field("Source", pa.string()),
+            pa.field("Major Genre", pa.string()),
+            pa.field("Creative Type", pa.string()),
+            pa.field("Director", pa.string()),
+            pa.field("Rotten Tomatoes Rating", pa.int8()),
+            pa.field("IMDB Rating", pa.float32()),
+            pa.field("IMDB Votes", pa.int64()),
+        ]
+    )
     transformed_spec, data, warnings = vf.runtime.pre_transform_logical_plan(
-        spec,
-        inline_dataset_schemas={
-            'movies': schema
-        },
-        datafusion_ctx=SessionContext()
+        spec, inline_dataset_schemas={"movies": schema}, datafusion_ctx=SessionContext()
     )
     for dataset in data:
-        print('Dataset', dataset['name'])
-        print(dataset.get('logical_plan'))
-        print(dataset.get('data'))
-        print('=' * 50)
+        print("Dataset", dataset["name"])
+        print(dataset.get("logical_plan"))
+        print(dataset.get("data"))
+        print("=" * 50)
 
 
 def get_spec() -> dict[str, Any]:

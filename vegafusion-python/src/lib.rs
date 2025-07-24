@@ -590,7 +590,7 @@ impl PyVegaFusionRuntime {
             // TODO: this is hacky, we need to pass planner warning messages to end user
             let warnings: Vec<_> = warnings
                 .iter()
-                .map(|warning| PreTransformSpecWarningSpec {
+                .map(|_warning| PreTransformSpecWarningSpec {
                     typ: "Planner".to_string(),
                     message: "Warning occurred during pre-transformation".to_string(),
                 })
