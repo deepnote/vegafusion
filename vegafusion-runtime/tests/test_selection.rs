@@ -35,7 +35,11 @@ fn make_brush_r(ranges: &[Vec<(&str, &str, [f64; 2])>], typ: &str) -> VegaFusion
             "values": Value::Array(value_elements),
         }));
     }
-    VegaFusionDataset::from_table(VegaFusionTable::from_json(&Value::Array(rows)).unwrap(), None).unwrap()
+    VegaFusionDataset::from_table(
+        VegaFusionTable::from_json(&Value::Array(rows)).unwrap(),
+        None,
+    )
+    .unwrap()
 }
 
 fn make_brush_e_single(field: &str, values: &[f64]) -> VegaFusionDataset {
@@ -55,7 +59,11 @@ fn make_brush_e_single(field: &str, values: &[f64]) -> VegaFusionDataset {
         }));
     }
 
-    VegaFusionDataset::from_table(VegaFusionTable::from_json(&Value::Array(rows)).unwrap(), None).unwrap()
+    VegaFusionDataset::from_table(
+        VegaFusionTable::from_json(&Value::Array(rows)).unwrap(),
+        None,
+    )
+    .unwrap()
 }
 
 fn make_brush_e_str(ranges: &Vec<Vec<(&str, &str, Vec<&str>)>>) -> VegaFusionDataset {
@@ -81,7 +89,11 @@ fn make_brush_e_str(ranges: &Vec<Vec<(&str, &str, Vec<&str>)>>) -> VegaFusionDat
         }));
     }
 
-    VegaFusionDataset::from_table(VegaFusionTable::from_json(&Value::Array(rows)).unwrap(), None).unwrap()
+    VegaFusionDataset::from_table(
+        VegaFusionTable::from_json(&Value::Array(rows)).unwrap(),
+        None,
+    )
+    .unwrap()
 }
 
 fn datum() -> VegaFusionTable {
@@ -242,7 +254,9 @@ mod test_vl_selection_test_e_mixed_str_bool {
               "values": ["Comedy", false]
             }
         ]);
-        let brush = VegaFusionDataset::from_table(VegaFusionTable::from_json(&brush_json).unwrap(), None).unwrap();
+        let brush =
+            VegaFusionDataset::from_table(VegaFusionTable::from_json(&brush_json).unwrap(), None)
+                .unwrap();
 
         let dataset_json = json!([
             {"Major Genre": "Adventure", "is_pg": true, "Title": "A"},

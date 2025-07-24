@@ -37,10 +37,10 @@ use vegafusion_runtime::tokio_runtime::TOKIO_THREAD_STACK_SIZE;
 use vegafusion_core::runtime::VegaFusionRuntimeTrait;
 use vegafusion_runtime::task_graph::cache::VegaFusionCache;
 
+use pyo3::types::PyString;
+use pyo3_arrow::PySchema;
 use vegafusion_common::arrow::datatypes::SchemaRef;
 use vegafusion_common::data::scalar::ScalarValueHelpers;
-use pyo3_arrow::PySchema;
-use pyo3::types::PyString;
 
 static INIT: Once = Once::new();
 
@@ -559,7 +559,7 @@ impl PyVegaFusionRuntime {
 
         Python::with_gil(|py| -> PyResult<(PyObject, PyObject, PyObject)> {
             let py_spec = pythonize::pythonize(py, &client_spec)?;
-            
+
             let py_export_list = PyList::empty(py);
             for export_update in export_updates {
                 let py_export_dict = PyDict::new(py);
@@ -618,7 +618,7 @@ impl PyVegaFusionRuntime {
     ) -> PyResult<(PyObject, PyObject, PyObject)> {
         Err(PyValueError::new_err(
             "pre_transform_logical_plan requires the 'logical-plan' feature. \
-            Please reinstall vegafusion with logical plan support enabled."
+            Please reinstall vegafusion with logical plan support enabled.",
         ))
     }
 

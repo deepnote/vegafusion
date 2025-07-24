@@ -145,14 +145,15 @@ pub fn compile_call(
                     }) => {
                         if let Some(dataset) = config.data_scope.get(name) {
                             if let Some(table) = dataset.as_table() {
-                                let tz_config = config
-                                    .tz_config
-                                    .with_context(|| "No local timezone info provided".to_string())?;
+                                let tz_config = config.tz_config.with_context(|| {
+                                    "No local timezone info provided".to_string()
+                                })?;
 
                                 callee(table, &node.arguments[1..], schema, &tz_config)
                             } else {
                                 Err(VegaFusionError::internal(format!(
-                                    "Dataset {} is not materialized as table", name
+                                    "Dataset {} is not materialized as table",
+                                    name
                                 )))
                             }
                         } else {

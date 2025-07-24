@@ -1555,7 +1555,9 @@ async fn check_spec_sequence(
                     let json_value = match value {
                         TaskValue::Scalar(value) => value.to_json().unwrap(),
                         TaskValue::Table(value) => value.to_json().unwrap(),
-                        TaskValue::Plan(_) => panic!("Plan values should not appear in client updates"),
+                        TaskValue::Plan(_) => {
+                            panic!("Plan values should not appear in client updates")
+                        }
                     };
                     ExportUpdateJSON {
                         namespace: ExportUpdateNamespace::try_from(scoped_var.0.namespace())

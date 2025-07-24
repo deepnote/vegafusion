@@ -7,7 +7,7 @@ use crate::{
         apply_pre_transform::apply_pre_transform_datasets,
         destringify_selection_datetimes::destringify_selection_datetimes,
         plan::{PlannerConfig, SpecPlan},
-        watch::{ExportUpdateArrow, ExportUpdate, ExportUpdateNamespace},
+        watch::{ExportUpdate, ExportUpdateArrow, ExportUpdateNamespace},
     },
     proto::gen::{
         pretransform::{
@@ -64,7 +64,6 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
         }
         Ok(result)
     }
-
 
     async fn pre_transform_spec_plan(
         &self,
@@ -402,7 +401,7 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
     ) -> Result<VegaFusionDataset> {
         // This is available only in embedded runtime
         Err(VegaFusionError::internal(
-            "create_dataset_from_schema not implemented for this runtime"
+            "create_dataset_from_schema not implemented for this runtime",
         ))
     }
 
@@ -418,7 +417,8 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
         let inline_datasets: HashMap<String, VegaFusionDataset> = inline_dataset_schemas
             .into_iter()
             .map(|(name, schema)| {
-                self.create_dataset_from_schema(&name, schema).map(|dataset| (name, dataset))
+                self.create_dataset_from_schema(&name, schema)
+                    .map(|dataset| (name, dataset))
             })
             .collect::<Result<HashMap<_, _>>>()?;
 

@@ -8,8 +8,8 @@ use std::convert::TryFrom;
 use vegafusion_common::arrow::record_batch::RecordBatch;
 use vegafusion_common::data::scalar::ScalarValueHelpers;
 use vegafusion_common::data::table::VegaFusionTable;
-use vegafusion_common::error::{Result, ResultWithContext, VegaFusionError};
 use vegafusion_common::datafusion_expr::LogicalPlan;
+use vegafusion_common::error::{Result, ResultWithContext, VegaFusionError};
 
 fn logical_plan_node_count(plan: &LogicalPlan) -> usize {
     1 + plan

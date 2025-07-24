@@ -204,7 +204,8 @@ impl TaskCall for DataUrlTask {
         let df = process_datetimes(&parse, df, &config.tz_config).await?;
 
         // Apply transforms (if any)
-        let (result_df, output_values) = if self.pipeline
+        let (result_df, output_values) = if self
+            .pipeline
             .as_ref()
             .map(|p| !p.transforms.is_empty())
             .unwrap_or(false)
@@ -213,15 +214,14 @@ impl TaskCall for DataUrlTask {
             pipeline.eval_sql(df, &config).await?
         } else {
             // No transforms, just remove any ordering column
-            (
-                df,
-                Vec::new(),
-            )
+            (df, Vec::new())
         };
 
         // Return value based on whether inline dataset was used
         let task_value = if let Some(inline_dataset) = inline_dataset_info {
-            result_df.task_value_from_dataset(inline_dataset.clone()).await?
+            result_df
+                .task_value_from_dataset(inline_dataset.clone())
+                .await?
         } else {
             TaskValue::Table(result_df.collect_to_table().await?.without_ordering()?)
         };

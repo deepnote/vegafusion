@@ -10,11 +10,11 @@ use datafusion_expr::expr;
 use vegafusion_common::column::flat_col;
 use vegafusion_common::data::ORDER_COL;
 use vegafusion_common::error::{Result, VegaFusionError};
+use vegafusion_core::data::dataset::VegaFusionDataset;
 use vegafusion_core::proto::gen::tasks::{Variable, VariableNamespace};
 use vegafusion_core::proto::gen::transforms::TransformPipeline;
 use vegafusion_core::task_graph::task_value::TaskValue;
 use vegafusion_core::transform::TransformDependencies;
-use vegafusion_core::data::dataset::VegaFusionDataset;
 
 #[async_trait]
 pub trait TransformPipelineUtils {
@@ -61,9 +61,7 @@ impl TransformPipelineUtils for TransformPipeline {
                             TaskValue::Table(table) => {
                                 VegaFusionDataset::from_table(table.clone(), None).unwrap()
                             }
-                            TaskValue::Plan(plan) => {
-                                VegaFusionDataset::from_plan(plan.clone())
-                            }
+                            TaskValue::Plan(plan) => VegaFusionDataset::from_plan(plan.clone()),
                             _ => {
                                 return Err(VegaFusionError::internal(
                                     "Expected table or plan value for data variable",

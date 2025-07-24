@@ -5,13 +5,13 @@ use datafusion_common::tree_node::{Transformed, TreeNode, TreeNodeRewriter};
 use datafusion_common::TableReference;
 use datafusion_expr::{col, Expr, LogicalPlanBuilder, UNNAMED_TABLE};
 use datafusion_functions_window::row_number::row_number;
-use vegafusion_core::data::dataset::VegaFusionDataset;
-use vegafusion_core::task_graph::task_value::TaskValue;
 use std::sync::Arc;
 use vegafusion_common::arrow::array::RecordBatch;
 use vegafusion_common::arrow::compute::concat_batches;
 use vegafusion_common::data::table::VegaFusionTable;
 use vegafusion_common::error::ResultWithContext;
+use vegafusion_core::data::dataset::VegaFusionDataset;
+use vegafusion_core::task_graph::task_value::TaskValue;
 
 #[async_trait]
 pub trait SessionContextUtils {
@@ -40,13 +40,19 @@ impl SessionContextUtils for SessionContext {
 
 #[async_trait]
 pub trait TaskValueUtils {
-    async fn to_materialized(&self, ctx: &SessionContext) -> vegafusion_common::error::Result<TaskValue>;
+    async fn to_materialized(
+        &self,
+        ctx: &SessionContext,
+    ) -> vegafusion_common::error::Result<TaskValue>;
 }
 
 #[async_trait]
 impl TaskValueUtils for TaskValue {
     // TODO: this ideally should return new MaterializedTaskValue enum which won't have Plan variant at all
-    async fn to_materialized(&self, ctx: &SessionContext) -> vegafusion_common::error::Result<TaskValue> {
+    async fn to_materialized(
+        &self,
+        ctx: &SessionContext,
+    ) -> vegafusion_common::error::Result<TaskValue> {
         match self {
             TaskValue::Plan(plan) => {
                 let df = ctx.execute_logical_plan(plan.clone()).await?;
@@ -65,8 +71,14 @@ pub trait DataFrameUtils {
     async fn with_index(self, index_name: &str) -> vegafusion_common::error::Result<DataFrame>;
     // TODO: Not the best names, since task_value is made from DataFrame, not dataset/other task value,
     // but which variant of task value we create depends on source dataset/task value
-    async fn task_value_from_dataset(self, ds: VegaFusionDataset) -> vegafusion_common::error::Result<TaskValue>;
-    async fn task_value_from_task_value(self, tv: TaskValue) -> vegafusion_common::error::Result<TaskValue>;
+    async fn task_value_from_dataset(
+        self,
+        ds: VegaFusionDataset,
+    ) -> vegafusion_common::error::Result<TaskValue>;
+    async fn task_value_from_task_value(
+        self,
+        tv: TaskValue,
+    ) -> vegafusion_common::error::Result<TaskValue>;
 
     /// Variant of aggregate that can handle agg expressions that include projections on top
     /// of aggregations. Also includes groupby expressions in the final result
@@ -113,7 +125,10 @@ impl DataFrameUtils for DataFrame {
         }
     }
 
-    async fn task_value_from_dataset(self, ds: VegaFusionDataset) -> vegafusion_common::error::Result<TaskValue> {
+    async fn task_value_from_dataset(
+        self,
+        ds: VegaFusionDataset,
+    ) -> vegafusion_common::error::Result<TaskValue> {
         if matches!(ds, VegaFusionDataset::Plan { .. }) {
             Ok(TaskValue::Plan(self.logical_plan().clone()))
         } else {
@@ -122,7 +137,10 @@ impl DataFrameUtils for DataFrame {
         }
     }
 
-    async fn task_value_from_task_value(self, tv: TaskValue) -> vegafusion_common::error::Result<TaskValue> {
+    async fn task_value_from_task_value(
+        self,
+        tv: TaskValue,
+    ) -> vegafusion_common::error::Result<TaskValue> {
         if matches!(tv, TaskValue::Plan(_)) {
             Ok(TaskValue::Plan(self.logical_plan().clone()))
         } else {

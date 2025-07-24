@@ -2,8 +2,8 @@ use crate::expression::compiler::call::{default_callables, VegaFusionCallable};
 use crate::task_graph::timezone::RuntimeTzConfig;
 use num_traits::float::FloatConst;
 use std::collections::HashMap;
-use vegafusion_core::data::dataset::VegaFusionDataset;
 use vegafusion_common::datafusion_common::ScalarValue;
+use vegafusion_core::data::dataset::VegaFusionDataset;
 
 #[derive(Clone)]
 pub struct CompilationConfig {
