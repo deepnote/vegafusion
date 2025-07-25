@@ -39,7 +39,6 @@ use object_store::ObjectStore;
 use vegafusion_common::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use vegafusion_common::column::flat_col;
 use vegafusion_common::data::table::VegaFusionTable;
-use vegafusion_common::data::ORDER_COL;
 use vegafusion_common::datatypes::{is_integer_datatype, is_string_datatype};
 use vegafusion_core::proto::gen::transforms::transform::TransformKind;
 use vegafusion_core::spec::visitors::extract_inline_dataset;
@@ -193,11 +192,7 @@ impl TaskCall for DataUrlTask {
         };
 
         // Ensure there is an ordering column present
-        let df = if df.schema().inner().column_with_name(ORDER_COL).is_none() {
-            df.with_index().await?
-        } else {
-            df
-        };
+        let df = df.with_index().await?;
 
         // Perform any up-front type conversions
         let df = pre_process_column_types(df).await?;

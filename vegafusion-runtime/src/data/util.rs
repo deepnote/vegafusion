@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use datafusion::datasource::{provider_as_source, MemTable};
 use datafusion::prelude::{DataFrame, SessionContext};
 use datafusion_common::tree_node::{Transformed, TreeNode, TreeNodeRewriter};
-use datafusion_common::TableReference;
+use datafusion_common::{Column, TableReference};
 use datafusion_expr::{col, Expr, LogicalPlanBuilder, UNNAMED_TABLE};
 use datafusion_functions_window::row_number::row_number;
 use std::sync::Arc;
@@ -115,24 +115,39 @@ impl DataFrameUtils for DataFrame {
     }
 
     async fn with_index(self) -> vegafusion_common::error::Result<DataFrame> {
-        if self.schema().inner().column_with_name(ORDER_COL).is_some() {
-            // Column is already present, don't overwrite
-            Ok(self.select(vec![datafusion_expr::expr_fn::wildcard()])?)
-        } else {
-            let selections: Vec<datafusion_expr::select_expr::SelectExpr> = vec![
-                row_number().alias(ORDER_COL).into(),
-                datafusion_expr::expr_fn::wildcard(),
-            ];
-            Ok(self.select(selections)?)
+        if self.schema().has_column(&Column::from(ORDER_COL)) {
+            return Ok(self);
         }
+    
+        let df = self.window(vec![row_number().alias(ORDER_COL)])?;
+    
+        let mut cols = vec![col(ORDER_COL)];
+        cols.extend(
+            df.schema()
+                .fields()
+                .iter()
+                .filter(|f| f.name() != ORDER_COL)
+                .map(|f| col(f.name())),
+        );
+    
+        Ok(df.select(cols)?)
     }
 
     async fn drop_index(self) -> vegafusion_common::error::Result<DataFrame> {
-        if self.schema().inner().column_with_name(ORDER_COL).is_some() {
-            Ok(self.drop_columns(&[ORDER_COL])?)
-        } else {
-            Ok(self.clone())
+        if !self.schema().has_column(&Column::from(ORDER_COL)) {
+            return Ok(self);
         }
+    
+        let keep: Vec<String> = self
+            .schema()
+            .fields()
+            .iter()
+            .filter(|f| f.name() != ORDER_COL)
+            .map(|f| f.name().to_string())
+            .collect();
+    
+        let keep_refs: Vec<&str> = keep.iter().map(|s| s.as_str()).collect();
+        Ok(self.select_columns(&keep_refs)?)
     }
 
     async fn task_value_from_dataset(
