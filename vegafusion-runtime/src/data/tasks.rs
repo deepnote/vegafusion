@@ -152,7 +152,9 @@ impl TaskCall for DataUrlTask {
                         ctx.vegafusion_table(table).await?
                     }
                     VegaFusionDataset::Plan { plan } => {
-                        ctx.execute_logical_plan(plan.clone()).await?
+                        DataFrame::new(ctx.state(), plan.clone())
+                            .with_index()
+                            .await?
                     }
                 }
             } else if let Ok(df) = ctx.table(inline_name).await {
@@ -192,7 +194,7 @@ impl TaskCall for DataUrlTask {
 
         // Ensure there is an ordering column present
         let df = if df.schema().inner().column_with_name(ORDER_COL).is_none() {
-            df.with_index(ORDER_COL).await?
+            df.with_index().await?
         } else {
             df
         };
@@ -217,13 +219,15 @@ impl TaskCall for DataUrlTask {
             (df, Vec::new())
         };
 
+        let result_df = result_df.drop_index().await?;
+
         // Return value based on whether inline dataset was used
         let task_value = if let Some(inline_dataset) = inline_dataset_info {
             result_df
                 .task_value_from_dataset(inline_dataset.clone())
                 .await?
         } else {
-            TaskValue::Table(result_df.collect_to_table().await?.without_ordering()?)
+            TaskValue::Table(result_df.collect_to_table().await?)
         };
 
         Ok((task_value, output_values))
@@ -541,7 +545,7 @@ impl TaskCall for DataValuesTask {
             let sql_df = process_datetimes(&parse, df, &config.tz_config).await?;
 
             let (df, output_values) = pipeline.eval_sql(sql_df, &config).await?;
-            let table = df.collect_to_table().await?.without_ordering()?;
+            let table = df.drop_index().await?.collect_to_table().await?;
             (table, output_values)
         } else {
             // No transforms
@@ -550,7 +554,7 @@ impl TaskCall for DataValuesTask {
             (values_df.collect_to_table().await?, Vec::new())
         };
 
-        let table_value = TaskValue::Table(transformed_table.without_ordering()?);
+        let table_value = TaskValue::Table(transformed_table);
 
         Ok((table_value, output_values))
     }
@@ -594,23 +598,16 @@ impl TaskCall for DataSourceTask {
             }
         }
 
-        let mut source_df = match &source_dataset {
+        let source_df = match &source_dataset {
             VegaFusionDataset::Table { table, .. } => ctx.vegafusion_table(table.clone()).await?,
-            VegaFusionDataset::Plan { plan } => ctx.execute_logical_plan(plan.clone()).await?,
+            VegaFusionDataset::Plan { plan } => DataFrame::new(ctx.state(), plan.clone()),
         };
 
-        if source_df
-            .schema()
-            .inner()
-            .column_with_name(ORDER_COL)
-            .is_none()
-        {
-            source_df = source_df.with_index(ORDER_COL).await?;
-        }
+        let source_df = source_df.with_index().await?;
 
         let pipeline = self.pipeline.as_ref().unwrap();
         let (df, output_values) = pipeline.eval_sql(source_df, &config).await?;
-
+        let df = df.drop_index().await?;
         let task_value = df.task_value_from_dataset(source_dataset.clone()).await?;
         Ok((task_value, output_values))
     }

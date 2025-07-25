@@ -9,6 +9,7 @@ use std::sync::Arc;
 use vegafusion_common::arrow::array::RecordBatch;
 use vegafusion_common::arrow::compute::concat_batches;
 use vegafusion_common::data::table::VegaFusionTable;
+use vegafusion_common::data::ORDER_COL;
 use vegafusion_common::error::ResultWithContext;
 use vegafusion_core::data::dataset::VegaFusionDataset;
 use vegafusion_core::task_graph::task_value::TaskValue;
@@ -55,7 +56,7 @@ impl TaskValueUtils for TaskValue {
     ) -> vegafusion_common::error::Result<TaskValue> {
         match self {
             TaskValue::Plan(plan) => {
-                let df = ctx.execute_logical_plan(plan.clone()).await?;
+                let df = DataFrame::new(ctx.state(), plan.clone());
                 let table = df.collect_to_table().await?;
                 Ok(TaskValue::Table(table))
             }
@@ -68,7 +69,8 @@ impl TaskValueUtils for TaskValue {
 pub trait DataFrameUtils {
     async fn collect_to_table(self) -> vegafusion_common::error::Result<VegaFusionTable>;
     async fn collect_flat(self) -> vegafusion_common::error::Result<RecordBatch>;
-    async fn with_index(self, index_name: &str) -> vegafusion_common::error::Result<DataFrame>;
+    async fn with_index(self) -> vegafusion_common::error::Result<DataFrame>;
+    async fn drop_index(self) -> vegafusion_common::error::Result<DataFrame>;
     // TODO: Not the best names, since task_value is made from DataFrame, not dataset/other task value,
     // but which variant of task value we create depends on source dataset/task value
     async fn task_value_from_dataset(
@@ -112,16 +114,24 @@ impl DataFrameUtils for DataFrame {
             .with_context(|| String::from("Failed to concatenate RecordBatches"))
     }
 
-    async fn with_index(self, index_name: &str) -> vegafusion_common::error::Result<DataFrame> {
-        if self.schema().inner().column_with_name(index_name).is_some() {
+    async fn with_index(self) -> vegafusion_common::error::Result<DataFrame> {
+        if self.schema().inner().column_with_name(ORDER_COL).is_some() {
             // Column is already present, don't overwrite
             Ok(self.select(vec![datafusion_expr::expr_fn::wildcard()])?)
         } else {
             let selections: Vec<datafusion_expr::select_expr::SelectExpr> = vec![
-                row_number().alias(index_name).into(),
+                row_number().alias(ORDER_COL).into(),
                 datafusion_expr::expr_fn::wildcard(),
             ];
             Ok(self.select(selections)?)
+        }
+    }
+
+    async fn drop_index(self) -> vegafusion_common::error::Result<DataFrame> {
+        if self.schema().inner().column_with_name(ORDER_COL).is_some() {
+            Ok(self.drop_columns(&[ORDER_COL])?)
+        } else {
+            Ok(self.clone())
         }
     }
 
