@@ -121,13 +121,13 @@ impl DataFrameUtils for DataFrame {
 
         let df = self.window(vec![row_number().alias(ORDER_COL)])?;
 
-        let mut cols = vec![col(ORDER_COL)];
+        let mut cols: Vec<Expr> = vec![Expr::Column(Column::from(ORDER_COL))];
         cols.extend(
             df.schema()
                 .fields()
                 .iter()
                 .filter(|f| f.name() != ORDER_COL)
-                .map(|f| col(f.name())),
+                .map(|f| Expr::Column(Column::from_name(f.name().clone()))),
         );
 
         Ok(df.select(cols)?)
