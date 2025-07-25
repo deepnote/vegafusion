@@ -118,9 +118,9 @@ impl DataFrameUtils for DataFrame {
         if self.schema().has_column(&Column::from(ORDER_COL)) {
             return Ok(self);
         }
-    
+
         let df = self.window(vec![row_number().alias(ORDER_COL)])?;
-    
+
         let mut cols = vec![col(ORDER_COL)];
         cols.extend(
             df.schema()
@@ -129,7 +129,7 @@ impl DataFrameUtils for DataFrame {
                 .filter(|f| f.name() != ORDER_COL)
                 .map(|f| col(f.name())),
         );
-    
+
         Ok(df.select(cols)?)
     }
 
@@ -137,7 +137,7 @@ impl DataFrameUtils for DataFrame {
         if !self.schema().has_column(&Column::from(ORDER_COL)) {
             return Ok(self);
         }
-    
+
         let keep: Vec<String> = self
             .schema()
             .fields()
@@ -145,7 +145,7 @@ impl DataFrameUtils for DataFrame {
             .filter(|f| f.name() != ORDER_COL)
             .map(|f| f.name().to_string())
             .collect();
-    
+
         let keep_refs: Vec<&str> = keep.iter().map(|s| s.as_str()).collect();
         Ok(self.select_columns(&keep_refs)?)
     }
