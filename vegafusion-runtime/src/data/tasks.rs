@@ -151,9 +151,7 @@ impl TaskCall for DataUrlTask {
                         ctx.vegafusion_table(table).await?
                     }
                     VegaFusionDataset::Plan { plan } => {
-                        DataFrame::new(ctx.state(), plan.clone())
-                            .with_index()
-                            .await?
+                        DataFrame::new(ctx.state(), plan.clone()).with_index()?
                     }
                 }
             } else if let Ok(df) = ctx.table(inline_name).await {
@@ -192,7 +190,7 @@ impl TaskCall for DataUrlTask {
         };
 
         // Ensure there is an ordering column present
-        let df = df.with_index().await?;
+        let df = df.with_index()?;
 
         // Perform any up-front type conversions
         let df = pre_process_column_types(df).await?;
@@ -214,7 +212,7 @@ impl TaskCall for DataUrlTask {
             (df, Vec::new())
         };
 
-        let result_df = result_df.drop_index().await?;
+        let result_df = result_df.drop_index()?;
 
         // Return value based on whether inline dataset was used
         let task_value = if let Some(inline_dataset) = inline_dataset_info {
@@ -540,13 +538,16 @@ impl TaskCall for DataValuesTask {
             let sql_df = process_datetimes(&parse, df, &config.tz_config).await?;
 
             let (df, output_values) = pipeline.eval_sql(sql_df, &config).await?;
-            let table = df.drop_index().await?.collect_to_table().await?;
+            let table = df.drop_index()?.collect_to_table().await?;
             (table, output_values)
         } else {
             // No transforms
             let values_df = ctx.vegafusion_table(values_table).await?;
-            let values_df = process_datetimes(&parse, values_df, tz_config).await?;
-            (values_df.collect_to_table().await?, Vec::new())
+            let values_df: DataFrame = process_datetimes(&parse, values_df, tz_config).await?;
+            (
+                values_df.drop_index()?.collect_to_table().await?,
+                Vec::new(),
+            )
         };
 
         let table_value = TaskValue::Table(transformed_table);
@@ -598,11 +599,11 @@ impl TaskCall for DataSourceTask {
             VegaFusionDataset::Plan { plan } => DataFrame::new(ctx.state(), plan.clone()),
         };
 
-        let source_df = source_df.with_index().await?;
+        let source_df = source_df.with_index()?;
 
         let pipeline = self.pipeline.as_ref().unwrap();
         let (df, output_values) = pipeline.eval_sql(source_df, &config).await?;
-        let df = df.drop_index().await?;
+        let df = df.drop_index()?;
         let task_value = df.task_value_from_dataset(source_dataset.clone()).await?;
         Ok((task_value, output_values))
     }

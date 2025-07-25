@@ -69,8 +69,8 @@ impl TaskValueUtils for TaskValue {
 pub trait DataFrameUtils {
     async fn collect_to_table(self) -> vegafusion_common::error::Result<VegaFusionTable>;
     async fn collect_flat(self) -> vegafusion_common::error::Result<RecordBatch>;
-    async fn with_index(self) -> vegafusion_common::error::Result<DataFrame>;
-    async fn drop_index(self) -> vegafusion_common::error::Result<DataFrame>;
+    fn with_index(self) -> vegafusion_common::error::Result<DataFrame>;
+    fn drop_index(self) -> vegafusion_common::error::Result<DataFrame>;
     // TODO: Not the best names, since task_value is made from DataFrame, not dataset/other task value,
     // but which variant of task value we create depends on source dataset/task value
     async fn task_value_from_dataset(
@@ -114,7 +114,7 @@ impl DataFrameUtils for DataFrame {
             .with_context(|| String::from("Failed to concatenate RecordBatches"))
     }
 
-    async fn with_index(self) -> vegafusion_common::error::Result<DataFrame> {
+    fn with_index(self) -> vegafusion_common::error::Result<DataFrame> {
         if self.schema().has_column(&Column::from(ORDER_COL)) {
             return Ok(self);
         }
@@ -133,7 +133,7 @@ impl DataFrameUtils for DataFrame {
         Ok(df.select(cols)?)
     }
 
-    async fn drop_index(self) -> vegafusion_common::error::Result<DataFrame> {
+    fn drop_index(self) -> vegafusion_common::error::Result<DataFrame> {
         if !self.schema().has_column(&Column::from(ORDER_COL)) {
             return Ok(self);
         }

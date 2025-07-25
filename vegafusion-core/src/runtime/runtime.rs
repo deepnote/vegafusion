@@ -373,7 +373,7 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
         let row_limit = options.row_limit.map(|l| l as usize);
         for named_task_value in named_task_values {
             // TODO: Handle TaskValue::Plan here?
-            let value = named_task_value.value;
+            let value: TaskValue = named_task_value.value;
             let variable = named_task_value.variable;
 
             // Apply row_limit
