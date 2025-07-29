@@ -53,3 +53,29 @@ async fn test_logical_plan_to_spark_sql_rewrites_row_number() -> Result<(), Box<
     Ok(())
 }
 
+#[tokio::test]
+async fn test_logical_plan_to_spark_sql_rewrites_inf_and_nan() -> Result<(), Box<dyn std::error::Error>> {
+    let schema_fields = vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("value", DataType::Float64, false),
+    ];
+    
+    let df = create_test_dataframe(schema_fields).await?;
+    
+    // Create a query that will generate NaN and infinity literals in the logical plan
+    let filtered_df = df
+        .filter(col("value").gt(lit(f64::NAN)))?
+        .filter(col("value").lt(lit(f64::INFINITY)))?
+        .filter(col("value").gt(lit(f64::NEG_INFINITY)))?;
+
+    let plan = filtered_df.logical_plan().clone();
+    let spark_sql = logical_plan_to_spark_sql(&plan)?;
+
+    assert_eq!(
+        spark_sql,
+        "SELECT * FROM test_table WHERE test_table.value > float('-inf') AND test_table.value < float('inf') AND test_table.value > float('NaN')",
+        "Should wrap NaN and Infinity literals in float()"
+    );
+    Ok(())
+}
+

@@ -1,7 +1,6 @@
 use datafusion::datasource::{provider_as_source, MemTable};
 use datafusion::prelude::{DataFrame, SessionContext};
-use datafusion_expr::{col, lit, LogicalPlanBuilder};
-use datafusion_functions_window::row_number::row_number;
+use datafusion_expr::{col, lit, LogicalPlanBuilder, in_list};
 use std::sync::Arc;
 use vegafusion_common::arrow::array::RecordBatch;
 use vegafusion_common::arrow::datatypes::{DataType, Field, Schema};
@@ -18,7 +17,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Define a schema for a "users" table
     let schema = Arc::new(Schema::new(vec![
         Field::new("name", DataType::Utf8, false),
-        Field::new("age", DataType::Int32, false),
+        Field::new("age", DataType::Float32, false), // Changed to Float32 to support infinity/NaN
         Field::new("email", DataType::Utf8, true),
         Field::new("city", DataType::Utf8, true),
     ]));
@@ -49,12 +48,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let df = DataFrame::new(ctx.state(), base_plan);
 
-    let filtered_df = df.filter(col("age").gt(lit(21)))?;
-    let ordered_df = filtered_df.window(vec![row_number().alias("order")])?.select(vec![datafusion_expr::expr_fn::wildcard()])?;
+    // Filter out users with age values that are infinity, negative infinity, or NaN
+    let filtered_df = df.filter(
+        in_list(
+            col("age"),
+            vec![lit(f32::NAN), lit(f32::INFINITY), lit(f32::NEG_INFINITY)],
+            true,
+        )
+    )?;
 
-    let plan = ordered_df.logical_plan().clone();
+    let plan = filtered_df.logical_plan().clone();
 
-    println!("Final DataFusion Logical Plan (from DataFrame operations):");
+    println!("Final DataFusion Logical Plan (filtering out infinite/NaN age values):");
     println!("{}", plan.display_indent());
     println!();
 

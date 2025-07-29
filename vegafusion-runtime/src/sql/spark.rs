@@ -1,7 +1,7 @@
 use datafusion::sql::unparser::dialect::CustomDialectBuilder;
 use datafusion::sql::unparser::Unparser;
 use datafusion_expr::LogicalPlan;
-use sqlparser::ast::{visit_expressions_mut, Expr as AstExpr, Ident, OrderByExpr, OrderByOptions, Statement, WindowType};
+use sqlparser::ast::{self, visit_expressions_mut};
 use std::ops::ControlFlow;
 use vegafusion_common::error::{Result, VegaFusionError};
 
@@ -15,20 +15,21 @@ use vegafusion_common::error::{Result, VegaFusionError};
 pub fn logical_plan_to_spark_sql(plan: &LogicalPlan) -> Result<String> {
     let dialect = CustomDialectBuilder::new().build();
     let unparser = Unparser::new(&dialect).with_pretty(true);
-    let mut ast = unparser.plan_to_sql(plan).map_err(|e| {
+    let mut statement = unparser.plan_to_sql(plan).map_err(|e| {
         VegaFusionError::unparser(format!("Failed to generate SQL AST from logical plan: {}", e))
     })?;
 
     println!("AST before processing");
-    println!("{:#?}", ast);
+    println!("{:#?}", statement);
 
-    rewrite_row_number(&mut ast);
+    rewrite_row_number(&mut statement);
+    rewrite_inf_and_nan(&mut statement);
 
     println!("===============================");
     println!("AST after processing");
-    println!("{:#?}", ast);
+    println!("{:#?}", statement);
 
-    let spark_sql = ast.to_string();
+    let spark_sql = statement.to_string();
 
     Ok(spark_sql)
 }
@@ -37,20 +38,55 @@ pub fn logical_plan_to_spark_sql(plan: &LogicalPlan) -> Result<String> {
 /// `row_number() ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING``
 /// Which is not compatible with Spark. For Spark we rewrite AST to be
 /// `row_number() OVER (ORDER BY monotonically_increasing_id())``
-fn rewrite_row_number(ast: &mut Statement) {
-    visit_expressions_mut(ast, |expr: &mut AstExpr| {
-        if let AstExpr::Function(func) = expr {
+fn rewrite_row_number(statement: &mut ast::Statement) {
+    visit_expressions_mut(statement, |expr: &mut ast::Expr| {
+        if let ast::Expr::Function(func) = expr {
             if func.name.to_string().to_lowercase() == "row_number" {
-                if let Some(WindowType::WindowSpec(ref mut window_spec)) = &mut func.over {
+                if let Some(ast::WindowType::WindowSpec(ref mut window_spec)) = &mut func.over {
                     window_spec.window_frame = None;
-                    window_spec.order_by = vec![OrderByExpr {
-                        expr: AstExpr::Identifier(Ident::new("monotonically_increasing_id()")),
-                        options: OrderByOptions {
+                    window_spec.order_by = vec![ast::OrderByExpr {
+                        expr: ast::Expr::Identifier(ast::Ident::new("monotonically_increasing_id()")),
+                        options: ast::OrderByOptions {
                             asc: None,
                             nulls_first: None,
                         },  
                         with_fill: None 
                     }];
+                }
+            }
+        }
+        ControlFlow::<()>::Continue(())
+    });
+}
+
+/// When DataFusion generates SQL, NaN and infinity values are presented as
+/// literals, while Spark requires them to be `float('NaN')`, `float('inf')`, etc.
+fn rewrite_inf_and_nan(statement: &mut ast::Statement) {
+    const SPECIAL_VALUES: &[&str] = &["nan", "inf", "infinity", "+inf", "+infinity", "-inf", "-infinity"];
+    
+    visit_expressions_mut(statement, |expr: &mut ast::Expr| {
+        if let ast::Expr::Value(value) = expr {
+            if let ast::Value::Number(num_str, _) = &value.value {
+                if SPECIAL_VALUES.contains(&num_str.to_lowercase().as_str()) {
+                    *expr = ast::Expr::Function(ast::Function {
+                        name: ast::ObjectName::from(vec![ast::Ident::new("float")]),
+                        args: ast::FunctionArguments::List(ast::FunctionArgumentList {
+                            duplicate_treatment: None,
+                            args: vec![ast::FunctionArg::Unnamed(ast::FunctionArgExpr::Expr(
+                                ast::Expr::Value(ast::ValueWithSpan {
+                                    value: ast::Value::SingleQuotedString(num_str.clone()),
+                                    span: value.span.clone(),
+                                })
+                            ))],
+                            clauses: vec![],
+                        }),
+                        filter: None,
+                        null_treatment: None,
+                        over: None,
+                        within_group: vec![],
+                        uses_odbc_syntax: false,
+                        parameters: ast::FunctionArguments::None,
+                    });
                 }
             }
         }
