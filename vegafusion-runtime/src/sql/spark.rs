@@ -1,6 +1,8 @@
 use datafusion::sql::unparser::dialect::CustomDialectBuilder;
 use datafusion::sql::unparser::Unparser;
-use datafusion_expr::LogicalPlan;
+use datafusion_expr::{LogicalPlan, Expr};
+use datafusion_common::tree_node::{Transformed, TreeNode};
+use datafusion_common::{Column};
 use sqlparser::ast::{self, visit_expressions_mut};
 use std::ops::ControlFlow;
 use vegafusion_common::error::{Result, VegaFusionError};
@@ -13,12 +15,23 @@ use vegafusion_common::error::{Result, VegaFusionError};
 // it into an SQL string. This allows us to rewrite parts of the plan or syntax tree to 
 // be compatible with Spark.
 pub fn logical_plan_to_spark_sql(plan: &LogicalPlan) -> Result<String> {
+    println!("Plan before processing");
+    println!("{:#?}", plan);
+
+    let plan = plan.clone();
+    let processed_plan = rewrite_subquery_column_identifiers(plan)?;
+
+    println!("===============================");
+    println!("Plan after processing");
+    println!("{:#?}", processed_plan);
+
     let dialect = CustomDialectBuilder::new().build();
     let unparser = Unparser::new(&dialect).with_pretty(true);
-    let mut statement = unparser.plan_to_sql(plan).map_err(|e| {
+    let mut statement = unparser.plan_to_sql(&processed_plan).map_err(|e| {
         VegaFusionError::unparser(format!("Failed to generate SQL AST from logical plan: {}", e))
     })?;
 
+    println!("===============================");
     println!("AST before processing");
     println!("{:#?}", statement);
 
@@ -92,4 +105,40 @@ fn rewrite_inf_and_nan(statement: &mut ast::Statement) {
         }
         ControlFlow::<()>::Continue(())
     });
+}
+
+/// DataFusion logical plan which uses compound names when selecting from subquery:
+/// SELECT orders.customer_name, orders.customer_age FROM (SELECT orders.customer_name, orders.customer_age FROM orders)
+/// This is not valid SQL (not Spark-specific), as `orders` isn't available once we get out of first query.
+/// So we rewrite logical plan to replace compound names with just the column names in projections
+/// that select data from another projection
+fn rewrite_subquery_column_identifiers(plan: LogicalPlan) -> Result<LogicalPlan> {
+    let processed_plan = plan.transform_up_with_subqueries(|p| {
+        if let LogicalPlan::Projection(projection) = &p {
+            // only touch projections that read from another projection
+            if matches!(*projection.input, LogicalPlan::Projection { .. }) {
+                let rewritten_exprs = projection.expr
+                    .iter()
+                    .map(|e| {
+                        e.clone().transform_up(|mut ex| {
+                            if let Expr::Column(c) = &mut ex {
+                                *c = Column::from_name(c.name.clone());
+                                Ok(Transformed::yes(ex))
+                            } else {
+                                Ok(Transformed::no(ex))
+                            }
+                        }).map(|t| t.data)
+                    })
+                    .collect::<std::result::Result<_, _>>()?;
+                let new_plan_node = p.with_new_exprs(rewritten_exprs, vec![(*projection.input).clone()])?;
+                return Ok(Transformed::yes(new_plan_node))
+            }
+        }
+
+        Ok(Transformed::no(p))
+    }).map_err(|e| {
+        VegaFusionError::unparser(format!("Failed to rewrite subquery column identifiers: {}", e))
+    })?.data;
+    
+    Ok(processed_plan)
 }

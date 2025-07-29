@@ -1,6 +1,7 @@
 use datafusion::datasource::{provider_as_source, MemTable};
 use datafusion::prelude::{DataFrame, SessionContext};
-use datafusion_expr::{col, lit, LogicalPlanBuilder, in_list};
+use datafusion_expr::{LogicalPlanBuilder};
+use vegafusion_common::column::flat_col;
 use std::sync::Arc;
 use vegafusion_common::arrow::array::RecordBatch;
 use vegafusion_common::arrow::datatypes::{DataType, Field, Schema};
@@ -14,12 +15,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create a SessionContext
     let ctx = SessionContext::new();
 
-    // Define a schema for a "users" table
+    // Define a schema for a "orders" table
     let schema = Arc::new(Schema::new(vec![
-        Field::new("name", DataType::Utf8, false),
-        Field::new("age", DataType::Float32, false), // Changed to Float32 to support infinity/NaN
-        Field::new("email", DataType::Utf8, true),
-        Field::new("city", DataType::Utf8, true),
+        Field::new("customer_name", DataType::Utf8, false),
+        Field::new("customer_age", DataType::Float32, false),
+        Field::new("customer_email", DataType::Utf8, true),
     ]));
 
     // Create an empty RecordBatch with the schema
@@ -30,7 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create a logical plan by scanning the table
     let base_plan = LogicalPlanBuilder::scan(
-        "users", 
+        "orders", 
         provider_as_source(Arc::new(mem_table)), 
         None
     )?
@@ -42,26 +42,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     println!();
 
-    println!("Base DataFusion Logical Plan:");
-    println!("{}", base_plan.display_indent());
-    println!();
-
     let df = DataFrame::new(ctx.state(), base_plan);
 
     // Filter out users with age values that are infinity, negative infinity, or NaN
-    let filtered_df = df.filter(
-        in_list(
-            col("age"),
-            vec![lit(f32::NAN), lit(f32::INFINITY), lit(f32::NEG_INFINITY)],
-            true,
-        )
-    )?;
+    let selected_df = df
+    .select(vec![
+        flat_col("customer_name"),
+        flat_col("customer_age"),
+    ])?
+    .select(vec![
+        flat_col("customer_name"),
+        flat_col("customer_age"),
+    ])?
+    .select(vec![
+        flat_col("customer_name"),
+        flat_col("customer_age"),
+    ])?
+    .select(vec![
+        flat_col("customer_name"),
+        flat_col("customer_age"),
+    ])?;
 
-    let plan = filtered_df.logical_plan().clone();
+    let plan = selected_df.logical_plan().clone();
 
-    println!("Final DataFusion Logical Plan (filtering out infinite/NaN age values):");
+    println!("Final DataFusion Logical Plan:");
     println!("{}", plan.display_indent());
-    println!();
+    println!("======================");
 
     // Convert to Spark SQL
     match logical_plan_to_spark_sql(&plan) {
