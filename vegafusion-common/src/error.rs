@@ -65,6 +65,9 @@ pub enum VegaFusionError {
     #[error("Arrow error: {0}\n{1}")]
     ArrowError(ArrowError, ErrorContext),
 
+    #[error("Unparser error: {0}\n{1}")]
+    UnparserError(String, ErrorContext),
+
     #[error("DataFusion error: {0}\n{1}")]
     DataFusionError(DataFusionError, ErrorContext),
 
@@ -153,6 +156,10 @@ impl VegaFusionError {
                 context.contexts.push(context_fn().into());
                 VegaFusionError::DataFusionError(err, context)
             }
+            UnparserError(msg, mut context) => {
+                context.contexts.push(context_fn().into());
+                VegaFusionError::UnparserError(msg, context)
+            }
             #[cfg(feature = "proto")]
             DataFusionProtoError(err, mut context) => {
                 context.contexts.push(context_fn().into());
@@ -198,6 +205,10 @@ impl VegaFusionError {
                 VegaFusionError::UrlParseError(err, context)
             }
         }
+    }
+
+    pub fn unparser<S: Into<String>>(message: S) -> Self {
+        Self::UnparserError(message.into(), Default::default())
     }
 
     pub fn parse<S: Into<String>>(message: S) -> Self {
@@ -258,6 +269,9 @@ impl VegaFusionError {
             }
             DataFusionError(err, context) => {
                 VegaFusionError::ExternalError(err.to_string(), context.clone())
+            }
+            UnparserError(msg, context) => {
+                VegaFusionError::UnparserError(msg.clone(), context.clone())
             }
             #[cfg(feature = "proto")]
             DataFusionProtoError(err, context) => {

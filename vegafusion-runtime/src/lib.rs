@@ -6,6 +6,7 @@ pub mod data;
 pub mod datafusion;
 pub mod expression;
 pub mod signal;
+pub mod sql;
 pub mod task_graph;
 pub mod tokio_runtime;
 pub mod transform;

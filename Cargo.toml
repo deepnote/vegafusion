@@ -142,6 +142,10 @@ version = "49.0.0"
 [workspace.dependencies.datafusion-functions-window]
 version = "49.0.0"
 
+[workspace.dependencies.datafusion-sql]
+version = "48.0.0"
+default-features = false
+
 [workspace.dependencies.thiserror]
 version = "1.0.69"
 
