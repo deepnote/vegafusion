@@ -10,8 +10,8 @@ use vegafusion_common::error::{Result, VegaFusionError};
 /// This method converts a logical plan, which we get from DataFusion, into a SQL query
 /// which is compatible with Spark. 
 // The SQL generated from the DataFusion plan is not compatible with Spark by default.
-// To make it work, we take the logical plan and apply changes to either the logical plan 
-// itself or to the abstract syntax tree generated from this logical plan before converting 
+// To make it work, we apply changes to both the logical plan itself and to the 
+// abstract syntax tree generated from this logical plan before converting 
 // it into an SQL string. This allows us to rewrite parts of the plan or syntax tree to 
 // be compatible with Spark.
 pub fn logical_plan_to_spark_sql(plan: &LogicalPlan) -> Result<String> {
@@ -48,9 +48,13 @@ pub fn logical_plan_to_spark_sql(plan: &LogicalPlan) -> Result<String> {
 }
 
 /// When adding row_number() DataFusion generates SQL like this:
-/// `row_number() ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING``
+/// ```
+/// row_number() ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+/// ```
 /// Which is not compatible with Spark. For Spark we rewrite AST to be
-/// `row_number() OVER (ORDER BY monotonically_increasing_id())``
+/// ```
+/// row_number() OVER (ORDER BY monotonically_increasing_id())
+/// ```
 fn rewrite_row_number(statement: &mut ast::Statement) {
     visit_expressions_mut(statement, |expr: &mut ast::Expr| {
         if let ast::Expr::Function(func) = expr {
@@ -108,8 +112,10 @@ fn rewrite_inf_and_nan(statement: &mut ast::Statement) {
 }
 
 /// DataFusion logical plan which uses compound names when selecting from subquery:
+/// ```
 /// SELECT orders.customer_name, orders.customer_age FROM (SELECT orders.customer_name, orders.customer_age FROM orders)
-/// This is not valid SQL (not Spark-specific), as `orders` isn't available once we get out of first query.
+/// ```
+/// This is not a valid SQL, as `orders` isn't available once we get out of first query.
 /// So we rewrite logical plan to replace compound names with just the column names in projections
 /// that select data from another projection
 fn rewrite_subquery_column_identifiers(plan: LogicalPlan) -> Result<LogicalPlan> {
