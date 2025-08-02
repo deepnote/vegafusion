@@ -7,6 +7,7 @@ use sqlparser::ast::{self, visit_expressions_mut};
 use std::collections::HashMap;
 use std::ops::ControlFlow;
 use vegafusion_common::error::{Result, VegaFusionError};
+use regex;
 
 /// This method converts a logical plan, which we get from DataFusion, into a SQL query
 /// which is compatible with Spark. 
@@ -40,6 +41,7 @@ pub fn logical_plan_to_spark_sql(plan: &LogicalPlan) -> Result<String> {
     rewrite_row_number(&mut statement);
     rewrite_inf_and_nan(&mut statement);
     rewrite_timestamps(&mut statement);
+    rewrite_intervals(&mut statement);
 
     println!("===============================");
     println!("AST after processing");
@@ -122,7 +124,8 @@ fn rewrite_inf_and_nan(statement: &mut ast::Statement) {
 fn rewrite_timestamps(statement: &mut ast::Statement) {
     visit_expressions_mut(statement, |expr: &mut ast::Expr| {
         if let ast::Expr::Function(func) = expr {
-            if func.name.to_string().to_lowercase() == "make_timestamptz" {
+            let func_name = func.name.to_string().to_lowercase();
+            if func_name == "make_timestamptz" {
                 func.name = ast::ObjectName::from(vec![ast::Ident::new("make_timestamp")]);
                 
                 // Remove milliseconds (not supported by Spark)
@@ -131,6 +134,9 @@ fn rewrite_timestamps(statement: &mut ast::Statement) {
                         arg_list.args.remove(6); 
                     }
                 }
+            } else if matches!(func_name.as_str(), "to_timestamp_seconds" | "to_timestamp_millis" | "to_timestamp_micros" | "to_timestamp_nanos") {
+                // Replace all timestamp precision functions with just to_timestamp
+                func.name = ast::ObjectName::from(vec![ast::Ident::new("to_timestamp")]);
             }
         } else if let ast::Expr::Cast { data_type, .. } = expr {
             // Rewrite TIMESTAMP WITH TIME ZONE to just TIMESTAMP
@@ -140,6 +146,51 @@ fn rewrite_timestamps(statement: &mut ast::Statement) {
         }
         ControlFlow::<()>::Continue(())
     });
+}
+
+/// Rewrite interval expressions to use full names instead of abbreviations for Spark compatibility
+/// e.g. "1 MONS" -> "1 MONTHS", "2 MINS" -> "2 MINUTES"
+fn rewrite_intervals(statement: &mut ast::Statement) {
+    visit_expressions_mut(statement, |expr: &mut ast::Expr| {
+        if let ast::Expr::Interval(interval) = expr {
+            if let ast::Expr::Value(value_with_span) = interval.value.as_ref() {
+                if let ast::Value::SingleQuotedString(interval_str) = &value_with_span.value {
+                    *interval.value = ast::Expr::Value(ast::ValueWithSpan {
+                        value: ast::Value::SingleQuotedString(expand_interval_abbreviations(interval_str)),
+                        span: value_with_span.span.clone(),
+                    });
+                }
+            }
+        }
+        ControlFlow::<()>::Continue(())
+    });
+}
+
+/// Expand interval abbreviations to full names for Spark compatibility
+fn expand_interval_abbreviations(interval_str: &str) -> String {
+    // Use regex to match number followed by abbreviated unit
+    // This ensures we only replace actual interval units, not parts of other words
+    let patterns = [
+        (r"\b(\d+)\s+MONS\b", "${1} MONTHS"),
+        (r"\b(\d+)\s+MON\b", "${1} MONTH"),
+        (r"\b(\d+)\s+MINS\b", "${1} MINUTES"),
+        (r"\b(\d+)\s+MIN\b", "${1} MINUTE"),
+        (r"\b(\d+)\s+SECS\b", "${1} SECONDS"),
+        (r"\b(\d+)\s+SEC\b", "${1} SECOND"),
+        (r"\b(\d+)\s+HRS\b", "${1} HOURS"),
+        (r"\b(\d+)\s+HR\b", "${1} HOUR"),
+        (r"\b(\d+)\s+YRS\b", "${1} YEARS"),
+        (r"\b(\d+)\s+YR\b", "${1} YEAR"),
+    ];
+    
+    let mut result = interval_str.to_string();
+    for (pattern, replacement) in patterns {
+        result = regex::Regex::new(pattern)
+            .unwrap()
+            .replace_all(&result, replacement)
+            .to_string();
+    }
+    result
 }
 
 /// DataFusion logical plan which uses compound names when selecting from subquery:

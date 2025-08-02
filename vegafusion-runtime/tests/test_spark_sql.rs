@@ -1,13 +1,13 @@
 use datafusion::datasource::{provider_as_source, MemTable};
 use datafusion::prelude::{DataFrame, SessionContext};
-use datafusion_expr::{col, lit, LogicalPlanBuilder};
+use datafusion_expr::{col, lit, LogicalPlanBuilder, Expr};
 use std::sync::Arc;
 use vegafusion_common::arrow::array::RecordBatch;
 use vegafusion_common::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use vegafusion_common::column::flat_col;
 use vegafusion_runtime::data::util::DataFrameUtils;
 use vegafusion_runtime::sql::logical_plan_to_spark_sql;
-use datafusion_functions::expr_fn::to_char;
+use datafusion_functions::expr_fn::{to_char, to_timestamp_seconds};
 use vegafusion_runtime::expression::compiler::utils::ExprHelpers;
 use vegafusion_runtime::datafusion::udfs::datetime::make_timestamptz::make_timestamptz;
 
@@ -182,7 +182,7 @@ async fn test_logical_plan_to_spark_sql_rewrites_timestamps() -> Result<(), Box<
     let df = create_test_dataframe(schema_fields).await?;
     let df_schema = df.schema().clone();
     
-    // Create operations that will generate make_timestamptz function calls and TIMESTAMP WITH TIME ZONE casts
+    // Create operations that will generate make_timestamptz function calls, TIMESTAMP WITH TIME ZONE casts, and to_timestamp_seconds calls
     let timestamp_df = df
         .select(vec![
             // This should create a cast to TIMESTAMP WITH TIME ZONE, which should be rewritten to TIMESTAMP
@@ -201,16 +201,46 @@ async fn test_logical_plan_to_spark_sql_rewrites_timestamps() -> Result<(), Box<
                 lit(123), // This 7th argument (milliseconds) should be dropped
                 "UTC",
             ).alias("made_timestamp").into(),
+            // This should create a to_timestamp_seconds call, which should be rewritten to to_timestamp
+            to_timestamp_seconds(vec![lit("2023-12-25 10:30:45")]).alias("parsed_timestamp"),
         ])?;
 
     let plan = timestamp_df.logical_plan().clone();
     let spark_sql = logical_plan_to_spark_sql(&plan)?;
 
-    // Check that make_timestamptz was rewritten to make_timestamp
+    // Check that make_timestamptz was rewritten to make_timestamp and to_timestamp_seconds was rewritten to to_timestamp
     assert_eq!(
         spark_sql,
-        "SELECT TRY_CAST(test_table.order_date AS TIMESTAMP) AS order_date_tz, make_timestamp(2023, 12, 25, 10, 30, 45, 'UTC') AS made_timestamp FROM test_table",
-        "Generated SQL should not use TIMESTAMP WITH TIMEZONE type"
+        "SELECT TRY_CAST(test_table.order_date AS TIMESTAMP) AS order_date_tz, make_timestamp(2023, 12, 25, 10, 30, 45, 'UTC') AS made_timestamp, to_timestamp('2023-12-25 10:30:45') AS parsed_timestamp FROM test_table",
+        "Generated SQL should rewrite timestamp functions for Spark compatibility"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_logical_plan_to_spark_sql_rewrites_intervals() -> Result<(), Box<dyn std::error::Error>> {
+    let schema_fields = vec![
+        Field::new("timestamp_col", DataType::Timestamp(TimeUnit::Millisecond, None), false),
+    ];
+    
+    let df = create_test_dataframe(schema_fields).await?;
+    
+    // Create a query that will generate interval expressions with abbreviated names  
+    let interval_df = df
+        .select(vec![
+            col("timestamp_col") + lit(datafusion_common::ScalarValue::IntervalYearMonth(Some(1)))
+        ])?;
+
+    let plan = interval_df.logical_plan().clone();
+    let spark_sql = logical_plan_to_spark_sql(&plan)?;
+
+    let expected_sql = "SELECT test_table.timestamp_col + INTERVAL '0 YEARS 1 MONTHS' FROM test_table";
+    
+    assert_eq!(
+        spark_sql,
+        expected_sql,
+        "Generated SQL should expand interval abbreviations to full names"
     );
 
     Ok(())
