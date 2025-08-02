@@ -1,9 +1,10 @@
 use datafusion::sql::unparser::dialect::CustomDialectBuilder;
 use datafusion::sql::unparser::Unparser;
-use datafusion_expr::{LogicalPlan, Expr};
+use datafusion_expr::{LogicalPlan, Expr, expr::ScalarFunction};
 use datafusion_common::tree_node::{Transformed, TreeNode};
-use datafusion_common::{Column};
+use datafusion_common::{Column, ScalarValue};
 use sqlparser::ast::{self, visit_expressions_mut};
+use std::collections::HashMap;
 use std::ops::ControlFlow;
 use vegafusion_common::error::{Result, VegaFusionError};
 
@@ -20,6 +21,7 @@ pub fn logical_plan_to_spark_sql(plan: &LogicalPlan) -> Result<String> {
 
     let plan = plan.clone();
     let processed_plan = rewrite_subquery_column_identifiers(plan)?;
+    let processed_plan = rewrite_datetime_formatting(processed_plan)?;
 
     println!("===============================");
     println!("Plan after processing");
@@ -37,6 +39,7 @@ pub fn logical_plan_to_spark_sql(plan: &LogicalPlan) -> Result<String> {
 
     rewrite_row_number(&mut statement);
     rewrite_inf_and_nan(&mut statement);
+    rewrite_timestamps(&mut statement);
 
     println!("===============================");
     println!("AST after processing");
@@ -111,6 +114,34 @@ fn rewrite_inf_and_nan(statement: &mut ast::Statement) {
     });
 }
 
+/// Timestamp is weird in Spark. 
+/// First of all, TIMESTAMP type is SQL in "naive", it doesn't have associated timezone. But in Spark it actually has.
+/// And Spark doesn't support TIMESTAMP WITH TIME ZONE type, so we rewrite it to just TIMESTAMP.
+/// Because of this we also rewrite calls to make_timestamptz into make_timestamp, dropping milliseconds argument,
+/// as it's not supported by Spark.
+fn rewrite_timestamps(statement: &mut ast::Statement) {
+    visit_expressions_mut(statement, |expr: &mut ast::Expr| {
+        if let ast::Expr::Function(func) = expr {
+            if func.name.to_string().to_lowercase() == "make_timestamptz" {
+                func.name = ast::ObjectName::from(vec![ast::Ident::new("make_timestamp")]);
+                
+                // Remove milliseconds (not supported by Spark)
+                if let ast::FunctionArguments::List(ref mut arg_list) = &mut func.args {
+                    if arg_list.args.len() >= 7 {
+                        arg_list.args.remove(6); 
+                    }
+                }
+            }
+        } else if let ast::Expr::Cast { data_type, .. } = expr {
+            // Rewrite TIMESTAMP WITH TIME ZONE to just TIMESTAMP
+            if let ast::DataType::Timestamp(_, ast::TimezoneInfo::WithTimeZone) = data_type {
+                *data_type = ast::DataType::Timestamp(None, ast::TimezoneInfo::None);
+            }
+        }
+        ControlFlow::<()>::Continue(())
+    });
+}
+
 /// DataFusion logical plan which uses compound names when selecting from subquery:
 /// ```
 /// SELECT orders.customer_name, orders.customer_age FROM (SELECT orders.customer_name, orders.customer_age FROM orders)
@@ -147,4 +178,151 @@ fn rewrite_subquery_column_identifiers(plan: LogicalPlan) -> Result<LogicalPlan>
     })?.data;
     
     Ok(processed_plan)
+}
+
+/// Rewrite datetime formatting expressions to be compatible with Spark
+fn rewrite_datetime_formatting(plan: LogicalPlan) -> Result<LogicalPlan> {
+    let processed_plan = plan.transform_up_with_subqueries(|p| {
+        let p = p.map_expressions(|expr| {
+            expr.transform(&|e| {
+                if let Expr::ScalarFunction(sf) = &e {
+                    if sf.name().eq_ignore_ascii_case("to_char") {
+                        let mut new_args = sf.args.clone();
+                        if new_args.len() > 1 {
+                            if let Expr::Literal(ScalarValue::Utf8(Some(format_str)), _) = &new_args[1] {
+                                let spark_format = chrono_to_spark(format_str)
+                                    .map_err(|e| datafusion_common::DataFusionError::External(Box::new(e)))?;
+                                new_args[1] = Expr::Literal(ScalarValue::Utf8(Some(spark_format)), None);
+                                let new_sf = ScalarFunction {
+                                    func: sf.func.clone(),
+                                    args: new_args,
+                                };
+                                return Ok(Transformed::yes(Expr::ScalarFunction(new_sf)));
+                            }
+                        }
+                    }
+                }
+                Ok(Transformed::no(e))
+            })
+        })?.data;
+        Ok(Transformed::yes(p))
+    }).map_err(|e| {
+        VegaFusionError::unparser(format!("Failed to rewrite datetime formatting: {}", e))
+    })?.data;
+    
+    Ok(processed_plan)
+}
+
+
+lazy_static! {
+    /// chrono-strftime → SparkSQL pattern map
+    static ref CHRONO_SPARK_MAP: HashMap<&'static str, &'static str> = {
+        HashMap::from([
+            // year
+            ("Y", "yyyy"), ("y", "yy"),
+            // month
+            ("m", "MM"), ("b", "MMM"), ("h", "MMM"), ("B", "MMMM"),
+            // day
+            ("d", "dd"), ("e", "d"), ("j", "DDD"),
+            // hour / minute / second
+            ("H", "HH"), ("I", "hh"), ("k", "H"), ("l", "h"),
+            ("M", "mm"), ("S", "ss"),
+            // week
+            ("U", "ww"), ("W", "ww"), ("V", "ww"),
+            // weekday names
+            ("a", "EEE"), ("A", "EEEE"),
+            // AM / PM
+            ("p", "a"), ("P", "a"),
+            // timezone
+            ("z", "Z"), ("Z", "z"),
+        ])
+    };
+}
+
+/// Convert a chrono `strftime` pattern (e.g. "%Y-%m-%d %H:%M:%S")
+/// to a Spark-SQL `date_format` pattern (e.g. "yyyy-MM-dd HH:mm:ss").
+fn chrono_to_spark(fmt: &str) -> Result<String> {
+    let mut out = String::with_capacity(fmt.len() * 2);
+    let mut chars = fmt.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c != '%' {
+            // Check if this character needs to be quoted
+            // Common separators like -, :, space don't need quotes
+            // Letters and other special characters do need quotes
+            if !matches!(c, '-' | ':' | ' ' | '/' | ',' | '.') {
+                // Collect consecutive literal characters that need quoting
+                let mut literal = String::new();
+                literal.push(c);
+                
+                // Continue collecting non-% characters that need quoting
+                while let Some(&next_c) = chars.peek() {
+                    if next_c == '%' || !matches!(next_c, '-' | ':' | ' ' | '/' | ',' | '.') {
+                        break;
+                    }
+                    literal.push(chars.next().unwrap());
+                }
+                
+                // Wrap the literal string in single quotes
+                out.push_str(&format!("\\'{}\\'", &literal));
+            } else {
+                // Characters that don't need quoting (like -, :, space)
+                out.push(c);
+            }
+            continue;
+        }
+
+        // literal %%
+        if chars.peek() == Some(&'%') {
+            out.push('%');
+            chars.next();
+            continue;
+        }
+
+        // collect every char up to and incl. the terminating alpha
+        let mut modifier = String::new();   // '.', ':', '#' …
+        let mut digits   = String::new();   // width like 3 in %3f
+        let mut letter   = '\0';
+
+        while let Some(&ch) = chars.peek() {
+            chars.next();
+            if ch.is_ascii_alphabetic() {
+                letter = ch;
+                break;
+            } else if ch.is_ascii_digit() {
+                digits.push(ch);
+            } else {
+                modifier.push(ch);
+            }
+        }
+
+        match letter {
+            // -------- fractional seconds --------
+            'f' => {
+                // width: %f        -> 9  (nanoseconds)
+                //        %3f       -> 3  (fixed)
+                //        %.f       -> 9  (leading dot)
+                //        %.3f      -> 3  (leading dot, fixed)
+                let width: usize = digits.parse::<usize>().unwrap_or(9).clamp(1, 9);
+                if modifier.contains('.') { out.push('.'); }
+                out.push_str(&"S".repeat(width));                // S, SS, … SSSSSSSSS
+            }
+
+            // -------- time-zone offsets --------
+            'z' if modifier == ":" => out.push_str("XXX"),        // %:z -> +09:30 :contentReference[oaicite:0]{index=0}
+            'z' if modifier == "::" => out.push_str("XXXXX"),     // %::z -> +09:30:00
+            'z' if modifier == ":::" => out.push_str("X"),        // %:::z -> +09
+            'z' => out.push_str("Z"),                             // %z  -> +0930
+
+            // -------- everything else that has a direct map --------
+            _ => {
+                let key = &format!("{}{}", modifier, letter);     // e.g. ""+"Y", ".f", ":z"
+                match CHRONO_SPARK_MAP.get(key.as_str()) {
+                    Some(rep) => out.push_str(rep),
+                    None      => return Err(VegaFusionError::unparser(format!("unsupported specifier %{}", key))),
+                }
+            }
+        }
+    }
+    Ok(out)
 }

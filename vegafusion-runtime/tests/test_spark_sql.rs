@@ -3,10 +3,13 @@ use datafusion::prelude::{DataFrame, SessionContext};
 use datafusion_expr::{col, lit, LogicalPlanBuilder};
 use std::sync::Arc;
 use vegafusion_common::arrow::array::RecordBatch;
-use vegafusion_common::arrow::datatypes::{DataType, Field, Schema};
+use vegafusion_common::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use vegafusion_common::column::flat_col;
 use vegafusion_runtime::data::util::DataFrameUtils;
 use vegafusion_runtime::sql::logical_plan_to_spark_sql;
+use datafusion_functions::expr_fn::to_char;
+use vegafusion_runtime::expression::compiler::utils::ExprHelpers;
+use vegafusion_runtime::datafusion::udfs::datetime::make_timestamptz::make_timestamptz;
 
 async fn create_test_dataframe(schema_fields: Vec<Field>) -> Result<DataFrame, Box<dyn std::error::Error>> {
     let ctx = SessionContext::new();
@@ -111,6 +114,103 @@ async fn test_logical_plan_to_spark_sql_rewrites_subquery_column_identifiers() -
         spark_sql.trim(),
         expected_sql,
         "Generated SQL should rewrite subquery column identifiers correctly"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_logical_plan_to_spark_sql_chrono_formatting() -> Result<(), Box<dyn std::error::Error>> {
+    let schema_fields = vec![
+        Field::new("timestamp_col", DataType::Timestamp(TimeUnit::Millisecond, Some("UTC".into())), false),
+    ];
+    
+    let df = create_test_dataframe(schema_fields).await?;
+    
+    // Test basic datetime format conversion: %Y-%m-%d %H:%M:%S -> yyyy-MM-dd HH:mm:ss
+    let df_basic = df
+        .clone()
+        .select(vec![to_char(col("timestamp_col"), lit("%Y-%m-%d %H:%M:%S"))])?;
+    
+    let plan_basic = df_basic.logical_plan().clone();
+    let spark_sql_basic = logical_plan_to_spark_sql(&plan_basic)?;
+    
+    assert!(
+        spark_sql_basic.contains("yyyy-MM-dd HH:mm:ss"),
+        "Basic datetime format should be converted to Spark format. Got: {}",
+        spark_sql_basic
+    );
+
+    // Test fractional seconds: %.3f -> .SSS
+    let df_frac = df
+        .clone()
+        .select(vec![to_char(col("timestamp_col"), lit("%.3f"))])?;
+    
+    let plan_frac = df_frac.logical_plan().clone();
+    let spark_sql_frac = logical_plan_to_spark_sql(&plan_frac)?;
+    
+    assert!(
+        spark_sql_frac.contains(".SSS"),
+        "Fractional seconds format should be converted to Spark format. Got: {}",
+        spark_sql_frac
+    );
+
+    // Test full ISO format: %Y-%m-%dT%H:%M:%S%.f%:z -> yyyy-MM-dd'T'HH:mm:ss.SSSSSSSSSXXX
+    let df_iso = df
+        .clone()
+        .select(vec![to_char(col("timestamp_col"), lit("%Y-%m-%dT%H:%M:%S%.f%:z"))])?;
+    
+    let plan_iso = df_iso.logical_plan().clone();
+    let spark_sql_iso = logical_plan_to_spark_sql(&plan_iso)?;
+    
+    assert!(
+        // Double single quote because it will be inside SQL string and has to be escaped
+        spark_sql_iso.contains("yyyy-MM-dd''T''HH:mm:ss.SSSSSSSSSXXX"),
+        "ISO datetime format should be converted to Spark format. Got: {}",
+        spark_sql_iso
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_logical_plan_to_spark_sql_rewrites_timestamps() -> Result<(), Box<dyn std::error::Error>> {
+    let schema_fields = vec![
+        Field::new("order_date", DataType::Timestamp(TimeUnit::Millisecond, None), false),
+    ];
+    
+    let df = create_test_dataframe(schema_fields).await?;
+    let df_schema = df.schema().clone();
+    
+    // Create operations that will generate make_timestamptz function calls and TIMESTAMP WITH TIME ZONE casts
+    let timestamp_df = df
+        .select(vec![
+            // This should create a cast to TIMESTAMP WITH TIME ZONE, which should be rewritten to TIMESTAMP
+            col("order_date").try_cast_to(&DataType::Timestamp(
+                TimeUnit::Millisecond,
+                Some("America/Los_Angeles".to_string().into()),
+            ), &df_schema)?.alias("order_date_tz"),
+            // This should create a make_timestamptz call, which should be rewritten to make_timestamp with 7th arg dropped
+            make_timestamptz(
+                lit(2023),
+                lit(12),
+                lit(25),
+                lit(10),
+                lit(30),
+                lit(45),
+                lit(123), // This 7th argument (milliseconds) should be dropped
+                "UTC",
+            ).alias("made_timestamp").into(),
+        ])?;
+
+    let plan = timestamp_df.logical_plan().clone();
+    let spark_sql = logical_plan_to_spark_sql(&plan)?;
+
+    // Check that make_timestamptz was rewritten to make_timestamp
+    assert_eq!(
+        spark_sql,
+        "SELECT TRY_CAST(test_table.order_date AS TIMESTAMP) AS order_date_tz, make_timestamp(2023, 12, 25, 10, 30, 45, 'UTC') AS made_timestamp FROM test_table",
+        "Generated SQL should not use TIMESTAMP WITH TIMEZONE type"
     );
 
     Ok(())
