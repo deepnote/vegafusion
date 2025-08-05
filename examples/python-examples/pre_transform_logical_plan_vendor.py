@@ -31,7 +31,7 @@ def main():
     )
     
     transformed_spec, export_updates, warnings = vf.runtime.pre_transform_logical_plan_vendor(
-        spec, output_format="spark", inline_dataset_schemas={"movies": schema}
+        spec, output_format="sparksql", inline_dataset_schemas={"movies": schema}
     )
     for dataset in export_updates:
         print("Dataset", dataset["name"])

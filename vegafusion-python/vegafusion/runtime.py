@@ -809,7 +809,7 @@ class VegaFusionRuntime:
     def pre_transform_logical_plan_vendor(
         self,
         spec: dict[str, Any] | str,
-        output_format: str = "spark",
+        output_format: str = "sparksql",
         local_tz: str | None = None,
         default_input_tz: str | None = None,
         preserve_interactivity: bool = True,
@@ -826,7 +826,7 @@ class VegaFusionRuntime:
 
         Args:
             spec: A Vega specification dict or JSON string.
-            output_format: Target SQL dialect. Currently supported: "spark"
+            output_format: Target SQL dialect. Currently supported: "sparksql"
             local_tz: Name of timezone to be considered local. E.g. 'America/New_York'.
                 Defaults to the value of vf.get_local_tz(), which defaults to the system
                 timezone if one can be determined.
@@ -869,7 +869,7 @@ class VegaFusionRuntime:
               * `"name"`: dataset name
               * `"logical_plan"`: json representation of LogicalPlan (when applicable)
               * `"data"`: materialized data (when applicable)
-              * `"sparksql"`: Spark-compatible SQL query (when output_format="spark" and logical_plan exists)
+              * `"sparksql"`: Spark-compatible SQL query (when output_format="sparksql" and logical_plan exists)
             * A list of warnings as dictionaries. Each warning dict has a ``'type'``
               key indicating the warning type, and a ``'message'`` key containing
               a description of the warning.

@@ -59,7 +59,7 @@ def test_pre_transform_logical_plan_vendor_has_sparksql():
     # Call the vendor-specific function like the example does
     new_spec, export_updates, warnings = vf.runtime.pre_transform_logical_plan_vendor(
         spec, 
-        output_format="spark",
+        output_format="sparksql",
         inline_dataset_schemas={"test_data": schema}
     )
     

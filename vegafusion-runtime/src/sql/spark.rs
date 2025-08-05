@@ -17,16 +17,16 @@ use regex;
 // it into an SQL string. This allows us to rewrite parts of the plan or syntax tree to 
 // be compatible with Spark.
 pub fn logical_plan_to_spark_sql(plan: &LogicalPlan) -> Result<String> {
-    println!("Plan before processing");
-    println!("{:#?}", plan);
+    // println!("Plan before processing");
+    // println!("{:#?}", plan);
 
     let plan = plan.clone();
     let processed_plan = rewrite_subquery_column_identifiers(plan)?;
     let processed_plan = rewrite_datetime_formatting(processed_plan)?;
 
-    println!("===============================");
-    println!("Plan after processing");
-    println!("{:#?}", processed_plan);
+    // println!("===============================");
+    // println!("Plan after processing");
+    // println!("{:#?}", processed_plan);
 
     let dialect = CustomDialectBuilder::new().build();
     let unparser = Unparser::new(&dialect).with_pretty(true);
@@ -34,18 +34,19 @@ pub fn logical_plan_to_spark_sql(plan: &LogicalPlan) -> Result<String> {
         VegaFusionError::unparser(format!("Failed to generate SQL AST from logical plan: {}", e))
     })?;
 
-    println!("===============================");
-    println!("AST before processing");
-    println!("{:#?}", statement);
+    // println!("===============================");
+    // println!("AST before processing");
+    // println!("{:#?}", statement);
 
     rewrite_row_number(&mut statement);
     rewrite_inf_and_nan(&mut statement);
+    rewrite_date_format(&mut statement);
     rewrite_timestamps(&mut statement);
     rewrite_intervals(&mut statement);
 
-    println!("===============================");
-    println!("AST after processing");
-    println!("{:#?}", statement);
+    // println!("===============================");
+    // println!("AST after processing");
+    // println!("{:#?}", statement);
 
     let spark_sql = statement.to_string();
 
@@ -116,6 +117,19 @@ fn rewrite_inf_and_nan(statement: &mut ast::Statement) {
     });
 }
 
+/// Rename `to_char` function calls to `date_format` for Spark compatibility
+/// Spark <4 doesn't support formatting dates with `to_char` function
+fn rewrite_date_format(statement: &mut ast::Statement) {
+    visit_expressions_mut(statement, |expr: &mut ast::Expr| {
+        if let ast::Expr::Function(func) = expr {
+            if func.name.to_string().to_lowercase() == "to_char" {
+                func.name = ast::ObjectName::from(vec![ast::Ident::new("date_format")]);
+            }
+        }
+        ControlFlow::<()>::Continue(())
+    });
+}
+
 /// Timestamp is weird in Spark. 
 /// First of all, TIMESTAMP type is SQL in "naive", it doesn't have associated timezone. But in Spark it actually has.
 /// And Spark doesn't support TIMESTAMP WITH TIME ZONE type, so we rewrite it to just TIMESTAMP.
@@ -134,9 +148,19 @@ fn rewrite_timestamps(statement: &mut ast::Statement) {
                         arg_list.args.remove(6); 
                     }
                 }
-            } else if matches!(func_name.as_str(), "to_timestamp_seconds" | "to_timestamp_millis" | "to_timestamp_micros" | "to_timestamp_nanos") {
-                // Replace all timestamp precision functions with just to_timestamp
-                func.name = ast::ObjectName::from(vec![ast::Ident::new("to_timestamp")]);
+            } else if func_name.starts_with("to_timestamp") {
+                // Spark only has to_timestamp function, no to_timestamp_nanos, etc
+                if func_name != "to_timestamp" {
+                    func.name = ast::ObjectName::from(vec![ast::Ident::new("to_timestamp")]);
+                }
+
+                // Spark's `to_timestamp` supports passing only format, while DataFusion allows to 
+                // match list of Chrono patterns. So we remove ALL patterns from this func call
+                if let ast::FunctionArguments::List(ref mut arg_list) = &mut func.args {
+                    if arg_list.args.len() > 1 {
+                        arg_list.args.truncate(1);
+                    }
+                }
             }
         } else if let ast::Expr::Cast { data_type, .. } = expr {
             // Rewrite TIMESTAMP WITH TIME ZONE to just TIMESTAMP

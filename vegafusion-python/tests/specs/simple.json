@@ -1,0 +1,85 @@
+{
+    "data": {
+        "url": "vegafusion+dataset://sales_data_1kk"
+    },
+    "layer": [
+      {
+        "layer": [
+          {
+            "layer": [
+              {
+                "mark": {
+                  "clip": true,
+                  "type": "bar",
+                  "color": "#2266D3",
+                  "tooltip": true
+                },
+                "encoding": {
+                  "x": {
+                    "sort": {
+                      "op": "sum",
+                      "field": "order_total",
+                      "order": "descending"
+                    },
+                    "type": "nominal",
+                    "field": "product_category",
+                    "scale": {
+                      "type": "linear"
+                    }
+                  },
+                  "y": {
+                    "axis": {
+                      "format": {
+                        "type": "default",
+                        "decimals": null
+                      },
+                      "formatType": "numberFormatFromNumberType"
+                    },
+                    "type": "quantitative",
+                    "field": "order_total",
+                    "scale": {
+                      "type": "linear"
+                    },
+                    "format": {
+                      "type": "default",
+                      "decimals": null
+                    },
+                    "aggregate": "sum",
+                    "formatType": "numberFormatFromNumberType"
+                  },
+                  "color": {
+                    "type": "nominal",
+                    "datum": "order_total",
+                    "scale": {
+                      "range": [
+                        "#2266D3"
+                      ],
+                      "domain": [
+                        "order_total"
+                      ]
+                    }
+                  },
+                  "xOffset": {
+                    "datum": "series_0"
+                  }
+                },
+                "transform": []
+              }
+            ]
+          }
+        ],
+        "resolve": {
+          "scale": {
+            "color": "independent"
+          }
+        }
+      }
+    ],
+    "config": {
+      "legend": {
+        "disable": false
+      }
+    },
+    "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+    "encoding": {}
+  }

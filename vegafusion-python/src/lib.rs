@@ -28,7 +28,7 @@ use vegafusion_common::data::table::VegaFusionTable;
 use vegafusion_core::data::dataset::VegaFusionDataset;
 use vegafusion_core::planning::plan::{PlannerConfig, PreTransformSpecWarningSpec, SpecPlan};
 use vegafusion_core::planning::projection_pushdown::get_column_usage as rs_get_column_usage;
-use vegafusion_core::planning::watch::{ExportUpdateJSON, WatchPlan};
+use vegafusion_core::planning::watch::{ExportUpdateJSON, WatchPlan, ExportUpdateNamespace};
 
 use vegafusion_core::spec::chart::ChartSpec;
 use vegafusion_core::task_graph::graph::ScopedVariable;
@@ -694,6 +694,12 @@ impl PyVegaFusionRuntime {
                 let py_export_dict = PyDict::new(py);
                 py_export_dict.set_item("name", export_update.name)?;
 
+                let namespace_str = match export_update.namespace {
+                    ExportUpdateNamespace::Signal => "signal",
+                    ExportUpdateNamespace::Data => "data",
+                };
+                py_export_dict.set_item("namespace", namespace_str)?;
+
                 match export_update.value {
                     TaskValue::Plan(plan) => {
                         // TODO: we probably want more flexible serialization format than pg_json, but protobuf fails with our memtable
@@ -701,7 +707,7 @@ impl PyVegaFusionRuntime {
                         py_export_dict.set_item("logical_plan", PyString::new(py, &lp_str))?;
                         
                         // Add vendor-specific SQL generation for logical plans
-                        if output_format == "spark" {
+                        if output_format == "sparksql" {
                             let spark_sql = vegafusion_runtime::sql::logical_plan_to_spark_sql(&plan)?;
                             py_export_dict.set_item("sparksql", spark_sql)?;
                         }
