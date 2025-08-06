@@ -144,17 +144,17 @@ impl VegaFusionRuntimeTrait for VegaFusionRuntime {
     ) -> Result<Vec<ExportUpdateArrow>> {
         let materialization_futures: Vec<_> = export_updates
             .into_iter()
-            .map(|export_update| {
-                async move {
-                    let materialized_value =
-                        export_update.value.to_materialized(self.ctx.as_ref()).await?;
-                    Ok::<_, VegaFusionError>(ExportUpdateArrow {
-                        namespace: export_update.namespace,
-                        name: export_update.name,
-                        scope: export_update.scope,
-                        value: materialized_value,
-                    })
-                }
+            .map(|export_update| async move {
+                let materialized_value = export_update
+                    .value
+                    .to_materialized(self.ctx.as_ref())
+                    .await?;
+                Ok::<_, VegaFusionError>(ExportUpdateArrow {
+                    namespace: export_update.namespace,
+                    name: export_update.name,
+                    scope: export_update.scope,
+                    value: materialized_value,
+                })
             })
             .collect();
 
