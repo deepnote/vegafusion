@@ -12,8 +12,7 @@ use vegafusion_common::data::table::VegaFusionTable;
 use vegafusion_common::data::ORDER_COL;
 use vegafusion_common::error::ResultWithContext;
 use vegafusion_core::data::dataset::VegaFusionDataset;
-use vegafusion_core::task_graph::task_value::{TaskValue, MaterializedTaskValue};
-
+use vegafusion_core::task_graph::task_value::{MaterializedTaskValue, TaskValue};
 
 #[async_trait]
 pub trait SessionContextUtils {
@@ -72,7 +71,7 @@ pub trait DataFrameUtils {
     async fn collect_flat(self) -> vegafusion_common::error::Result<RecordBatch>;
     fn with_index(self) -> vegafusion_common::error::Result<DataFrame>;
     fn drop_index(self) -> vegafusion_common::error::Result<DataFrame>;
-    
+
     /// Convert DataFrame to TaskValue, preserving the format type of the source
     async fn to_task_value(
         self,
@@ -152,9 +151,7 @@ impl DataFrameUtils for DataFrame {
         source_ds: &VegaFusionDataset,
     ) -> vegafusion_common::error::Result<TaskValue> {
         match source_ds {
-            VegaFusionDataset::Plan { .. } => {
-                Ok(TaskValue::Plan(self.logical_plan().clone()))
-            },
+            VegaFusionDataset::Plan { .. } => Ok(TaskValue::Plan(self.logical_plan().clone())),
             VegaFusionDataset::Table { .. } => {
                 let tbl = self.collect_to_table().await?.without_ordering()?;
                 Ok(TaskValue::Table(tbl))

@@ -602,10 +602,12 @@ impl PyVegaFusionRuntime {
             let warnings: Vec<_> = warnings
                 .iter()
                 .map(|warning| match warning.warning_type.as_ref().unwrap() {
-                    LogicalPlanWarningType::Planner(planner_warning) => PreTransformSpecWarningSpec {
-                        typ: "Planner".to_string(),
-                        message: planner_warning.message.clone(),
-                    },
+                    LogicalPlanWarningType::Planner(planner_warning) => {
+                        PreTransformSpecWarningSpec {
+                            typ: "Planner".to_string(),
+                            message: planner_warning.message.clone(),
+                        }
+                    }
                 })
                 .collect();
 

@@ -7,7 +7,6 @@ use std::sync::Once;
 use crate::util::vegajs_runtime::{vegajs_runtime, ExportImageFormat};
 use datafusion_common::ScalarValue;
 use rstest::rstest;
-use vegafusion_runtime::data::util::TaskValueUtils;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::fs;
@@ -16,6 +15,7 @@ use tokio::runtime::Runtime;
 use vegafusion_common::data::scalar::ScalarValueHelpers;
 use vegafusion_common::data::table::VegaFusionTable;
 use vegafusion_core::runtime::VegaFusionRuntimeTrait;
+use vegafusion_runtime::data::util::TaskValueUtils;
 
 use vegafusion_core::planning::plan::{PlannerConfig, SpecPlan};
 

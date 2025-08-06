@@ -216,9 +216,7 @@ impl TaskCall for DataUrlTask {
 
         // Return value based on whether inline dataset was used
         let task_value = if let Some(inline_dataset) = inline_dataset_info {
-            result_df
-                .to_task_value(inline_dataset)
-                .await?
+            result_df.to_task_value(inline_dataset).await?
         } else {
             TaskValue::Table(result_df.collect_to_table().await?)
         };

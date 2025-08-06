@@ -1,7 +1,7 @@
 use crate::planning::stitch::CommPlan;
 use crate::proto::gen::tasks::{Variable, VariableNamespace};
 use crate::task_graph::graph::ScopedVariable;
-use crate::task_graph::task_value::{TaskValue, MaterializedTaskValue};
+use crate::task_graph::task_value::{MaterializedTaskValue, TaskValue};
 use datafusion_common::ScalarValue;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};

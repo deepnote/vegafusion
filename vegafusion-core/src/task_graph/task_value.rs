@@ -124,7 +124,7 @@ impl TryFrom<&ProtoTaskValue> for TaskValue {
                 Ok(Self::Scalar(scalar))
             }
             // TODO: we could use datafusion_proto::bytes::logical_plan_from_bytes here, but that
-            // requires adding datafusion_proto to vegafusion-core deps, as well as passing 
+            // requires adding datafusion_proto to vegafusion-core deps, as well as passing
             // datafusion session (maybe empty one?) to unserialize plan
             Data::Plan(_value) => todo!(),
         }
@@ -148,7 +148,7 @@ impl TryFrom<&TaskValue> for ProtoTaskValue {
                 data: Some(Data::Table(table.to_ipc_bytes()?)),
             }),
             // TODO: we could use datafusion_proto::bytes::logical_plan_to_bytes here, but that
-            // requires adding datafusion_proto to vegafusion-core deps, as well as passing 
+            // requires adding datafusion_proto to vegafusion-core deps, as well as passing
             // datafusion session (maybe empty one?) to unserialize plan
             TaskValue::Plan(_) => Err(VegaFusionError::internal(
                 "Cannot convert Plan TaskValue to protobuf representation",

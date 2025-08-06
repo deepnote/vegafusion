@@ -13,9 +13,9 @@ use crate::{
     proto::gen::{
         pretransform::{
             pre_transform_extract_warning, PlannerWarning, PreTransformExtractOpts,
-            PreTransformExtractWarning, PreTransformRowLimitWarning, PreTransformSpecOpts,
+            PreTransformExtractWarning, PreTransformLogicalPlanOpts,
+            PreTransformLogicalPlanWarning, PreTransformRowLimitWarning, PreTransformSpecOpts,
             PreTransformSpecWarning, PreTransformValuesOpts, PreTransformValuesWarning,
-            PreTransformLogicalPlanWarning, PreTransformLogicalPlanOpts,
         },
         tasks::{NodeValueIndex, TaskGraph, TzConfig, VariableNamespace},
     },
@@ -411,7 +411,11 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
         spec: &ChartSpec,
         inline_dataset_schemas: HashMap<String, SchemaRef>,
         options: &PreTransformLogicalPlanOpts,
-    ) -> Result<(ChartSpec, Vec<ExportUpdate>, Vec<PreTransformLogicalPlanWarning>)> {
+    ) -> Result<(
+        ChartSpec,
+        Vec<ExportUpdate>,
+        Vec<PreTransformLogicalPlanWarning>,
+    )> {
         let inline_datasets: HashMap<String, VegaFusionDataset> = inline_dataset_schemas
             .into_iter()
             .map(|(name, schema)| {
