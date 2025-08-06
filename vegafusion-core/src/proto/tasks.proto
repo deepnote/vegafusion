@@ -160,6 +160,7 @@ message TaskGraphValueRequest {
 message ResponseTaskValue {
   Variable variable = 1;
   repeated uint32 scope = 2;
+  // TODO: this should be MaterializedTaskValue
   TaskValue value = 3;
 }
 

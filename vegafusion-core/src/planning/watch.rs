@@ -119,8 +119,6 @@ impl TryFrom<VariableNamespace> for ExportUpdateNamespace {
     }
 }
 
-// ExportUpdate and ExportUpdateArrow, but ExportUpdate.value can be any of TaskValue, while
-// ExportUpdateArrow.value can be only TaskValue::Table and TaskValue::Scalar
 #[derive(Debug, Clone)]
 pub struct ExportUpdate {
     pub namespace: ExportUpdateNamespace,
