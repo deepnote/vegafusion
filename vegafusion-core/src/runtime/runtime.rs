@@ -1,6 +1,7 @@
 use std::{any::Any, collections::HashMap, sync::Arc};
 
 use crate::proto::gen::pretransform::pre_transform_values_warning::WarningType as ValuesWarningType;
+use crate::task_graph::task_value::MaterializedTaskValue;
 use crate::{
     data::dataset::VegaFusionDataset,
     planning::{
@@ -14,6 +15,7 @@ use crate::{
             pre_transform_extract_warning, PlannerWarning, PreTransformExtractOpts,
             PreTransformExtractWarning, PreTransformRowLimitWarning, PreTransformSpecOpts,
             PreTransformSpecWarning, PreTransformValuesOpts, PreTransformValuesWarning,
+            PreTransformLogicalPlanWarning, PreTransformLogicalPlanOpts,
         },
         tasks::{NodeValueIndex, TaskGraph, TzConfig, VariableNamespace},
     },
@@ -54,7 +56,7 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
     ) -> Result<Vec<ExportUpdateArrow>> {
         let mut result = Vec::new();
         for export_update in export_updates {
-            let materialized_value = export_update.value.ensure_materialized()?;
+            let materialized_value = export_update.value.as_materialized()?;
             result.push(ExportUpdateArrow {
                 namespace: export_update.namespace,
                 name: export_update.name,
@@ -220,7 +222,7 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
                     if let Some(input_values) = input_values {
                         // Set inline value
                         data.values = Some(input_values);
-                    } else if let TaskValue::Table(table) = export_update.value {
+                    } else if let MaterializedTaskValue::Table(table) = export_update.value {
                         if table.num_rows() <= extract_threshold {
                             // Inline small tables
                             data.values = Some(table.to_json()?);
@@ -372,7 +374,6 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
         let mut task_values: Vec<TaskValue> = Vec::new();
         let row_limit = options.row_limit.map(|l| l as usize);
         for named_task_value in named_task_values {
-            // TODO: Handle TaskValue::Plan here?
             let value: TaskValue = named_task_value.value;
             let variable = named_task_value.variable;
 
@@ -409,11 +410,8 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
         &self,
         spec: &ChartSpec,
         inline_dataset_schemas: HashMap<String, SchemaRef>,
-        local_tz: &str,
-        default_input_tz: &Option<String>,
-        preserve_interactivity: bool,
-        keep_variables: Vec<ScopedVariable>,
-    ) -> Result<(ChartSpec, Vec<ExportUpdate>, Vec<PreTransformSpecWarning>)> {
+        options: &PreTransformLogicalPlanOpts,
+    ) -> Result<(ChartSpec, Vec<ExportUpdate>, Vec<PreTransformLogicalPlanWarning>)> {
         let inline_datasets: HashMap<String, VegaFusionDataset> = inline_dataset_schemas
             .into_iter()
             .map(|(name, schema)| {
@@ -421,26 +419,29 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
                     .map(|dataset| (name, dataset))
             })
             .collect::<Result<HashMap<_, _>>>()?;
-
+        let keep_variables: Vec<ScopedVariable> = options
+            .keep_variables
+            .clone()
+            .into_iter()
+            .map(|var| (var.variable.unwrap(), var.scope))
+            .collect();
         let (plan, export_updates) = self
             .pre_transform_spec_plan(
                 spec,
-                local_tz,
-                default_input_tz,
-                preserve_interactivity,
+                &options.local_tz,
+                &options.default_input_tz,
+                options.preserve_interactivity,
                 &inline_datasets,
                 keep_variables,
             )
             .await?;
 
-        // TODO: we have wrong warning type here, we need to create new one PreTransformLogicalPlanWarning
-        // TODO: we're likely missing warnings like unsupported spec or broken interactivity
-        let warnings: Vec<PreTransformSpecWarning> = plan
+        let warnings: Vec<PreTransformLogicalPlanWarning> = plan
             .warnings
             .iter()
-            .map(|planner_warning| PreTransformSpecWarning {
+            .map(|planner_warning| PreTransformLogicalPlanWarning {
                 warning_type: Some(
-                    crate::proto::gen::pretransform::pre_transform_spec_warning::WarningType::Planner(
+                    crate::proto::gen::pretransform::pre_transform_logical_plan_warning::WarningType::Planner(
                         PlannerWarning {
                             message: planner_warning.message(),
                         },

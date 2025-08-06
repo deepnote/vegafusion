@@ -12,7 +12,8 @@ use vegafusion_common::data::table::VegaFusionTable;
 use vegafusion_common::data::ORDER_COL;
 use vegafusion_common::error::ResultWithContext;
 use vegafusion_core::data::dataset::VegaFusionDataset;
-use vegafusion_core::task_graph::task_value::TaskValue;
+use vegafusion_core::task_graph::task_value::{TaskValue, MaterializedTaskValue};
+
 
 #[async_trait]
 pub trait SessionContextUtils {
@@ -42,25 +43,25 @@ impl SessionContextUtils for SessionContext {
 #[async_trait]
 pub trait TaskValueUtils {
     async fn to_materialized(
-        &self,
+        self,
         ctx: &SessionContext,
-    ) -> vegafusion_common::error::Result<TaskValue>;
+    ) -> vegafusion_common::error::Result<MaterializedTaskValue>;
 }
 
 #[async_trait]
 impl TaskValueUtils for TaskValue {
-    // TODO: this ideally should return new MaterializedTaskValue enum which won't have Plan variant at all
     async fn to_materialized(
-        &self,
+        self,
         ctx: &SessionContext,
-    ) -> vegafusion_common::error::Result<TaskValue> {
+    ) -> vegafusion_common::error::Result<MaterializedTaskValue> {
         match self {
             TaskValue::Plan(plan) => {
-                let df = DataFrame::new(ctx.state(), plan.clone());
+                let df = DataFrame::new(ctx.state(), plan);
                 let table = df.collect_to_table().await?;
-                Ok(TaskValue::Table(table))
+                Ok(MaterializedTaskValue::Table(table))
             }
-            _ => Ok(self.clone()),
+            TaskValue::Scalar(scalar) => Ok(MaterializedTaskValue::Scalar(scalar)),
+            TaskValue::Table(table) => Ok(MaterializedTaskValue::Table(table)),
         }
     }
 }
@@ -71,15 +72,11 @@ pub trait DataFrameUtils {
     async fn collect_flat(self) -> vegafusion_common::error::Result<RecordBatch>;
     fn with_index(self) -> vegafusion_common::error::Result<DataFrame>;
     fn drop_index(self) -> vegafusion_common::error::Result<DataFrame>;
-    // TODO: Not the best names, since task_value is made from DataFrame, not dataset/other task value,
-    // but which variant of task value we create depends on source dataset/task value
-    async fn task_value_from_dataset(
+    
+    /// Convert DataFrame to TaskValue, preserving the format type of the source
+    async fn to_task_value(
         self,
-        ds: VegaFusionDataset,
-    ) -> vegafusion_common::error::Result<TaskValue>;
-    async fn task_value_from_task_value(
-        self,
-        tv: TaskValue,
+        source: &VegaFusionDataset,
     ) -> vegafusion_common::error::Result<TaskValue>;
 
     /// Variant of aggregate that can handle agg expressions that include projections on top
@@ -150,27 +147,18 @@ impl DataFrameUtils for DataFrame {
         Ok(self.select_columns(&keep_refs)?)
     }
 
-    async fn task_value_from_dataset(
+    async fn to_task_value(
         self,
-        ds: VegaFusionDataset,
+        source_ds: &VegaFusionDataset,
     ) -> vegafusion_common::error::Result<TaskValue> {
-        if matches!(ds, VegaFusionDataset::Plan { .. }) {
-            Ok(TaskValue::Plan(self.logical_plan().clone()))
-        } else {
-            let tbl = self.collect_to_table().await?.without_ordering()?;
-            Ok(TaskValue::Table(tbl))
-        }
-    }
-
-    async fn task_value_from_task_value(
-        self,
-        tv: TaskValue,
-    ) -> vegafusion_common::error::Result<TaskValue> {
-        if matches!(tv, TaskValue::Plan(_)) {
-            Ok(TaskValue::Plan(self.logical_plan().clone()))
-        } else {
-            let tbl = self.collect_to_table().await?.without_ordering()?;
-            Ok(TaskValue::Table(tbl))
+        match source_ds {
+            VegaFusionDataset::Plan { .. } => {
+                Ok(TaskValue::Plan(self.logical_plan().clone()))
+            },
+            VegaFusionDataset::Table { .. } => {
+                let tbl = self.collect_to_table().await?.without_ordering()?;
+                Ok(TaskValue::Table(tbl))
+            }
         }
     }
 

@@ -7,6 +7,7 @@ use std::sync::Once;
 use crate::util::vegajs_runtime::{vegajs_runtime, ExportImageFormat};
 use datafusion_common::ScalarValue;
 use rstest::rstest;
+use vegafusion_runtime::data::util::TaskValueUtils;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::fs;
@@ -1470,11 +1471,12 @@ async fn check_spec_sequence(
             .await
             .expect("Failed to get node value");
 
+        let materialized_value = value.to_materialized(&runtime.ctx).await.unwrap();
         init.push(ExportUpdateJSON {
             namespace: ExportUpdateNamespace::try_from(var.0.namespace()).unwrap(),
             name: var.0.name.clone(),
             scope: var.1.clone(),
-            value: value.to_json().unwrap(),
+            value: materialized_value.to_json().unwrap(),
         });
     }
 

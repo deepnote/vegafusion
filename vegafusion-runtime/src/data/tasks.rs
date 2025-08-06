@@ -217,7 +217,7 @@ impl TaskCall for DataUrlTask {
         // Return value based on whether inline dataset was used
         let task_value = if let Some(inline_dataset) = inline_dataset_info {
             result_df
-                .task_value_from_dataset(inline_dataset.clone())
+                .to_task_value(inline_dataset)
                 .await?
         } else {
             TaskValue::Table(result_df.collect_to_table().await?)
@@ -604,7 +604,7 @@ impl TaskCall for DataSourceTask {
         let pipeline = self.pipeline.as_ref().unwrap();
         let (df, output_values) = pipeline.eval_sql(source_df, &config).await?;
         let df = df.drop_index()?;
-        let task_value = df.task_value_from_dataset(source_dataset.clone()).await?;
+        let task_value = df.to_task_value(&source_dataset).await?;
         Ok((task_value, output_values))
     }
 }

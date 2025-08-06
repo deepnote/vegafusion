@@ -16,6 +16,10 @@ message TaskValue {
    * Serialized Arrow record batch in Arrow IPC format
    */
     bytes table = 2;
+  /*
+   * Serialized LogicalPlan
+   */
+   bytes plan = 3;
   }
 }
 

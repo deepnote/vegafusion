@@ -1,7 +1,7 @@
 use crate::planning::stitch::CommPlan;
 use crate::proto::gen::tasks::{Variable, VariableNamespace};
 use crate::task_graph::graph::ScopedVariable;
-use crate::task_graph::task_value::TaskValue;
+use crate::task_graph::task_value::{TaskValue, MaterializedTaskValue};
 use datafusion_common::ScalarValue;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -129,14 +129,12 @@ pub struct ExportUpdate {
     pub value: TaskValue,
 }
 
-// TODO: ideally this enum will use MaterializedTaskValue (see vegafusion-runtime/src/data/util.rs) instead of TaskValue
-// to have compile-time guarantees
 #[derive(Debug, Clone)]
 pub struct ExportUpdateArrow {
     pub namespace: ExportUpdateNamespace,
     pub name: String,
     pub scope: Vec<u32>,
-    pub value: TaskValue,
+    pub value: MaterializedTaskValue,
 }
 
 impl ExportUpdateArrow {

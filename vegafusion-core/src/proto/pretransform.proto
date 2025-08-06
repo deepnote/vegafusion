@@ -73,6 +73,13 @@ message PreTransformValuesWarning {
   }
 }
 
+
+message PreTransformLogicalPlanWarning {
+  oneof warning_type {
+    PlannerWarning planner = 1;
+  }
+}
+
 /// Common pre-transform messages
 message PlannerWarning {
   string message = 1;
@@ -97,6 +104,14 @@ message PreTransformExtractOpts {
   int32 extract_threshold = 4;
   repeated PreTransformVariable keep_variables = 5;
 }
+
+message PreTransformLogicalPlanOpts {
+  string local_tz = 1;
+  optional string default_input_tz = 2;
+  bool preserve_interactivity = 3;
+  repeated PreTransformVariable keep_variables = 4;
+}
+
 
 message PreTransformExtractWarning {
   oneof warning_type {

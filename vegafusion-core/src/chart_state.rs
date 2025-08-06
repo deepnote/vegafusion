@@ -194,7 +194,7 @@ impl ChartState {
             .map(|response_value| {
                 let variable = response_value.variable;
                 let scope = response_value.scope;
-                let value = response_value.value;
+                let value = response_value.value.as_materialized()?;
 
                 Ok(ExportUpdateJSON {
                     namespace: match variable.ns() {
@@ -206,7 +206,6 @@ impl ChartState {
                     },
                     name: variable.name.clone(),
                     scope: scope.clone(),
-                    // TODO: this will fail for TaskValue::Plan
                     value: value.to_json()?,
                 })
             })

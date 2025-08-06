@@ -11,6 +11,7 @@ use tonic::transport::{Channel, Uri};
 use vegafusion_core::chart_state::{ChartState as RsChartState, ChartStateOpts};
 use vegafusion_core::error::{ToExternalError, VegaFusionError};
 use vegafusion_core::proto::gen::pretransform::pre_transform_extract_warning::WarningType as ExtractWarningType;
+use vegafusion_core::proto::gen::pretransform::pre_transform_logical_plan_warning::WarningType as LogicalPlanWarningType;
 use vegafusion_core::proto::gen::pretransform::pre_transform_values_warning::WarningType as ValueWarningType;
 use vegafusion_core::proto::gen::pretransform::{
     PreTransformExtractOpts, PreTransformSpecOpts, PreTransformValuesOpts, PreTransformVariable,
@@ -537,23 +538,33 @@ impl PyVegaFusionRuntime {
             }
         }
 
-        let mut keep_variables: Vec<ScopedVariable> = Vec::new();
+        let mut keep_variables: Vec<PreTransformVariable> = Vec::new();
         for (name, scope) in keep_signals.unwrap_or_default() {
-            keep_variables.push((Variable::new_signal(&name), scope))
+            keep_variables.push(PreTransformVariable {
+                variable: Some(Variable::new_signal(&name)),
+                scope,
+            });
         }
         for (name, scope) in keep_datasets.unwrap_or_default() {
-            keep_variables.push((Variable::new_data(&name), scope))
+            keep_variables.push(PreTransformVariable {
+                variable: Some(Variable::new_data(&name)),
+                scope,
+            });
         }
 
         let (client_spec, export_updates, warnings) = py.allow_threads(|| {
+            use vegafusion_core::proto::gen::pretransform::PreTransformLogicalPlanOpts;
+
             self.tokio_runtime
                 .block_on(self.runtime.pre_transform_logical_plan(
                     &spec,
                     schemas,
-                    &local_tz,
-                    &default_input_tz,
-                    preserve_interactivity,
-                    keep_variables,
+                    &PreTransformLogicalPlanOpts {
+                        local_tz,
+                        default_input_tz,
+                        preserve_interactivity,
+                        keep_variables,
+                    },
                 ))
         })?;
 
@@ -567,7 +578,8 @@ impl PyVegaFusionRuntime {
 
                 match export_update.value {
                     TaskValue::Plan(plan) => {
-                        // TODO: we probably want more flexible serialization format than pg_json, but protobuf fails with our memtable
+                        // TODO: we probably want more flexible serialization format than pg_json, but protobuf
+                        // fails with our memtable (possibly fixed in DataFusion 49)
                         let lp_str = format!("{}", plan.display_pg_json());
                         py_export_dict.set_item("logical_plan", PyString::new(py, &lp_str))?;
                     }
@@ -587,12 +599,13 @@ impl PyVegaFusionRuntime {
                 py_export_list.append(py_export_dict)?;
             }
 
-            // TODO: this is hacky, we need to pass planner warning messages to end user
             let warnings: Vec<_> = warnings
                 .iter()
-                .map(|_warning| PreTransformSpecWarningSpec {
-                    typ: "Planner".to_string(),
-                    message: "Warning occurred during pre-transformation".to_string(),
+                .map(|warning| match warning.warning_type.as_ref().unwrap() {
+                    LogicalPlanWarningType::Planner(planner_warning) => PreTransformSpecWarningSpec {
+                        typ: "Planner".to_string(),
+                        message: planner_warning.message.clone(),
+                    },
                 })
                 .collect();
 
