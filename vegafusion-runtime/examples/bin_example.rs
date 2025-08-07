@@ -1,6 +1,7 @@
 use datafusion_expr::LogicalPlan;
 use std::{collections::HashMap, sync::Arc};
 use vegafusion_core::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+use vegafusion_core::proto::gen::pretransform::PreTransformLogicalPlanOpts;
 use vegafusion_core::runtime::VegaFusionRuntimeTrait;
 use vegafusion_core::spec::chart::ChartSpec;
 use vegafusion_core::task_graph::task_value::TaskValue;
@@ -22,8 +23,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut datasets: HashMap<String, SchemaRef> = HashMap::new();
     datasets.insert("sales_data_1kk".to_string(), schema);
 
+    let options = PreTransformLogicalPlanOpts {
+        local_tz: "UTC".to_string(),
+        default_input_tz: None,
+        preserve_interactivity: false,
+        keep_variables: vec![],
+    };
+
     let (transformed_spec, transformed_datasets, warnings) = runtime
-        .pre_transform_logical_plan(&spec, datasets, "UTC", &None, false, vec![])
+        .pre_transform_logical_plan(&spec, datasets, &options)
         .await
         .unwrap();
 
