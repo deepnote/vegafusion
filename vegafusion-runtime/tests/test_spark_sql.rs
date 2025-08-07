@@ -1,6 +1,6 @@
 use datafusion::datasource::{provider_as_source, MemTable};
 use datafusion::prelude::{DataFrame, SessionContext};
-use datafusion_expr::{col, lit, Expr, LogicalPlanBuilder};
+use datafusion_expr::{col, lit, LogicalPlanBuilder};
 use datafusion_functions::expr_fn::{to_char, to_timestamp_seconds};
 use std::sync::Arc;
 use vegafusion_common::arrow::array::RecordBatch;
