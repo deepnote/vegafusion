@@ -65,7 +65,7 @@ pub fn logical_plan_to_spark_sql(plan: &LogicalPlan) -> Result<String> {
 /// row_number() OVER (ORDER BY monotonically_increasing_id())
 /// ```
 fn rewrite_row_number(statement: &mut ast::Statement) {
-    visit_expressions_mut(statement, |expr: &mut ast::Expr| {
+    let _ = visit_expressions_mut(statement, |expr: &mut ast::Expr| {
         if let ast::Expr::Function(func) = expr {
             if func.name.to_string().to_lowercase() == "row_number" {
                 if let Some(ast::WindowType::WindowSpec(ref mut window_spec)) = &mut func.over {
@@ -100,7 +100,7 @@ fn rewrite_inf_and_nan(statement: &mut ast::Statement) {
         "-infinity",
     ];
 
-    visit_expressions_mut(statement, |expr: &mut ast::Expr| {
+    let _ = visit_expressions_mut(statement, |expr: &mut ast::Expr| {
         if let ast::Expr::Value(value) = expr {
             if let ast::Value::Number(num_str, _) = &value.value {
                 if SPECIAL_VALUES.contains(&num_str.to_lowercase().as_str()) {
@@ -133,7 +133,7 @@ fn rewrite_inf_and_nan(statement: &mut ast::Statement) {
 /// Rename `to_char` function calls to `date_format` for Spark compatibility
 /// Spark <4 doesn't support formatting dates with `to_char` function
 fn rewrite_date_format(statement: &mut ast::Statement) {
-    visit_expressions_mut(statement, |expr: &mut ast::Expr| {
+    let _ = visit_expressions_mut(statement, |expr: &mut ast::Expr| {
         if let ast::Expr::Function(func) = expr {
             if func.name.to_string().to_lowercase() == "to_char" {
                 func.name = ast::ObjectName::from(vec![ast::Ident::new("date_format")]);
@@ -149,7 +149,7 @@ fn rewrite_date_format(statement: &mut ast::Statement) {
 /// Because of this we also rewrite calls to make_timestamptz into make_timestamp, dropping milliseconds argument,
 /// as it's not supported by Spark.
 fn rewrite_timestamps(statement: &mut ast::Statement) {
-    visit_expressions_mut(statement, |expr: &mut ast::Expr| {
+    let _ = visit_expressions_mut(statement, |expr: &mut ast::Expr| {
         if let ast::Expr::Function(func) = expr {
             let func_name = func.name.to_string().to_lowercase();
             if func_name == "make_timestamptz" {
@@ -188,7 +188,7 @@ fn rewrite_timestamps(statement: &mut ast::Statement) {
 /// Rewrite interval expressions to use full names instead of abbreviations for Spark compatibility
 /// e.g. "1 MONS" -> "1 MONTHS", "2 MINS" -> "2 MINUTES"
 fn rewrite_intervals(statement: &mut ast::Statement) {
-    visit_expressions_mut(statement, |expr: &mut ast::Expr| {
+    let _ = visit_expressions_mut(statement, |expr: &mut ast::Expr| {
         if let ast::Expr::Interval(interval) = expr {
             if let ast::Expr::Value(value_with_span) = interval.value.as_ref() {
                 if let ast::Value::SingleQuotedString(interval_str) = &value_with_span.value {
