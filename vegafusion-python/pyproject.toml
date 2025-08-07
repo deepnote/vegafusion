@@ -1,6 +1,6 @@
 [project]
-name = "vegafusion"
-version = "2.0.2"
+name = "deepnote_vegafusion"
+version = "2.0.2-deepnote.1"
 description = "Core tools for using VegaFusion from Python"
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -25,7 +25,7 @@ build-backend = "maturin"
 
 [project.urls]
 Homepage = "https://vegafusion.io"
-Repository = "https://github.com/hex-inc/vegafusion"
+Repository = "https://github.com/deepnote/vegafusion"
 Documentation = "https://vegafusion.io"
 
 [project.optional-dependencies]

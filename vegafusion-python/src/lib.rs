@@ -14,7 +14,7 @@ use vegafusion_core::proto::gen::pretransform::pre_transform_extract_warning::Wa
 use vegafusion_core::proto::gen::pretransform::pre_transform_logical_plan_warning::WarningType as LogicalPlanWarningType;
 use vegafusion_core::proto::gen::pretransform::pre_transform_values_warning::WarningType as ValueWarningType;
 use vegafusion_core::proto::gen::pretransform::{
-    PreTransformExtractOpts, PreTransformSpecOpts, PreTransformValuesOpts, PreTransformVariable,
+    PreTransformExtractOpts, PreTransformSpecOpts, PreTransformValuesOpts, PreTransformVariable, PreTransformLogicalPlanOpts,
 };
 use vegafusion_core::proto::gen::tasks::{TzConfig, Variable};
 use vegafusion_runtime::task_graph::GrpcVegaFusionRuntime;
@@ -553,7 +553,6 @@ impl PyVegaFusionRuntime {
         }
 
         let (client_spec, export_updates, warnings) = py.allow_threads(|| {
-            use vegafusion_core::proto::gen::pretransform::PreTransformLogicalPlanOpts;
 
             self.tokio_runtime
                 .block_on(self.runtime.pre_transform_logical_plan(
@@ -666,12 +665,18 @@ impl PyVegaFusionRuntime {
             }
         }
 
-        let mut keep_variables: Vec<ScopedVariable> = Vec::new();
+        let mut keep_variables: Vec<PreTransformVariable> = Vec::new();
         for (name, scope) in keep_signals.unwrap_or_default() {
-            keep_variables.push((Variable::new_signal(&name), scope))
+            keep_variables.push(PreTransformVariable {
+                variable: Some(Variable::new_signal(&name)),
+                scope,
+            });
         }
         for (name, scope) in keep_datasets.unwrap_or_default() {
-            keep_variables.push((Variable::new_data(&name), scope))
+            keep_variables.push(PreTransformVariable {
+                variable: Some(Variable::new_data(&name)),
+                scope,
+            });
         }
 
         let (client_spec, export_updates, warnings) = py.allow_threads(|| {
@@ -679,10 +684,12 @@ impl PyVegaFusionRuntime {
                 .block_on(self.runtime.pre_transform_logical_plan(
                     &spec,
                     schemas,
-                    &local_tz,
-                    &default_input_tz,
-                    preserve_interactivity,
-                    keep_variables,
+                    &PreTransformLogicalPlanOpts {
+                        local_tz,
+                        default_input_tz,
+                        preserve_interactivity,
+                        keep_variables,
+                    }
                 ))
         })?;
 

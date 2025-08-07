@@ -1,7 +1,7 @@
 [package]
 name = "vegafusion-wasm"
 license = "BSD-3-Clause"
-version = "2.0.2"
+version = "2.0.2-deepnote.1"
 edition = "2021"
 description = "VegaFusion WASM package for embedding Vega charts in the browser with a connection to a VegaFusion Runtime"
 
@@ -43,15 +43,15 @@ workspace = true
 [dependencies.vegafusion-common]
 path = "../vegafusion-common"
 features = ["json"]
-version = "2.0.2"
+version = "2.0.2-deepnote.1"
 
 [dependencies.vegafusion-core]
 path = "../vegafusion-core"
-version = "2.0.2"
+version = "2.0.2-deepnote.1"
 
 [dependencies.vegafusion-runtime]
 path = "../vegafusion-runtime"
-version = "2.0.2"
+version = "2.0.2-deepnote.1"
 default-features = false
 features = ["http-wasm"]
 
