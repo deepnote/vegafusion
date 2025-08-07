@@ -163,7 +163,7 @@ async fn test_logical_plan_to_spark_sql_chrono_formatting() -> Result<(), Box<dy
 
     assert!(
         // Double single quote because it will be inside SQL string and has to be escaped
-        spark_sql_iso.contains("yyyy-MM-dd''T''HH:mm:ss.SSSSSSSSSXXX"),
+        spark_sql_iso.contains("yyyy-MM-dd\\'T\\'HH:mm:ss.SSSSSSSSSXXX"),
         "ISO datetime format should be converted to Spark format. Got: {}",
         spark_sql_iso
     );
