@@ -1,20 +1,20 @@
 use datafusion::sql::unparser::dialect::CustomDialectBuilder;
 use datafusion::sql::unparser::Unparser;
-use datafusion_expr::{LogicalPlan, Expr, expr::ScalarFunction};
 use datafusion_common::tree_node::{Transformed, TreeNode};
 use datafusion_common::{Column, ScalarValue};
+use datafusion_expr::{expr::ScalarFunction, Expr, LogicalPlan};
+use regex;
 use sqlparser::ast::{self, visit_expressions_mut};
 use std::collections::HashMap;
 use std::ops::ControlFlow;
 use vegafusion_common::error::{Result, VegaFusionError};
-use regex;
 
 /// This method converts a logical plan, which we get from DataFusion, into a SQL query
-/// which is compatible with Spark. 
+/// which is compatible with Spark.
 // The SQL generated from the DataFusion plan is not compatible with Spark by default.
-// To make it work, we apply changes to both the logical plan itself and to the 
-// abstract syntax tree generated from this logical plan before converting 
-// it into an SQL string. This allows us to rewrite parts of the plan or syntax tree to 
+// To make it work, we apply changes to both the logical plan itself and to the
+// abstract syntax tree generated from this logical plan before converting
+// it into an SQL string. This allows us to rewrite parts of the plan or syntax tree to
 // be compatible with Spark.
 pub fn logical_plan_to_spark_sql(plan: &LogicalPlan) -> Result<String> {
     // println!("Plan before processing");
@@ -31,7 +31,10 @@ pub fn logical_plan_to_spark_sql(plan: &LogicalPlan) -> Result<String> {
     let dialect = CustomDialectBuilder::new().build();
     let unparser = Unparser::new(&dialect).with_pretty(true);
     let mut statement = unparser.plan_to_sql(&processed_plan).map_err(|e| {
-        VegaFusionError::unparser(format!("Failed to generate SQL AST from logical plan: {}", e))
+        VegaFusionError::unparser(format!(
+            "Failed to generate SQL AST from logical plan: {}",
+            e
+        ))
     })?;
 
     // println!("===============================");
@@ -68,12 +71,14 @@ fn rewrite_row_number(statement: &mut ast::Statement) {
                 if let Some(ast::WindowType::WindowSpec(ref mut window_spec)) = &mut func.over {
                     window_spec.window_frame = None;
                     window_spec.order_by = vec![ast::OrderByExpr {
-                        expr: ast::Expr::Identifier(ast::Ident::new("monotonically_increasing_id()")),
+                        expr: ast::Expr::Identifier(ast::Ident::new(
+                            "monotonically_increasing_id()",
+                        )),
                         options: ast::OrderByOptions {
                             asc: None,
                             nulls_first: None,
-                        },  
-                        with_fill: None 
+                        },
+                        with_fill: None,
                     }];
                 }
             }
@@ -85,8 +90,16 @@ fn rewrite_row_number(statement: &mut ast::Statement) {
 /// When DataFusion generates SQL, NaN and infinity values are presented as
 /// literals, while Spark requires them to be `float('NaN')`, `float('inf')`, etc.
 fn rewrite_inf_and_nan(statement: &mut ast::Statement) {
-    const SPECIAL_VALUES: &[&str] = &["nan", "inf", "infinity", "+inf", "+infinity", "-inf", "-infinity"];
-    
+    const SPECIAL_VALUES: &[&str] = &[
+        "nan",
+        "inf",
+        "infinity",
+        "+inf",
+        "+infinity",
+        "-inf",
+        "-infinity",
+    ];
+
     visit_expressions_mut(statement, |expr: &mut ast::Expr| {
         if let ast::Expr::Value(value) = expr {
             if let ast::Value::Number(num_str, _) = &value.value {
@@ -99,7 +112,7 @@ fn rewrite_inf_and_nan(statement: &mut ast::Statement) {
                                 ast::Expr::Value(ast::ValueWithSpan {
                                     value: ast::Value::SingleQuotedString(num_str.clone()),
                                     span: value.span.clone(),
-                                })
+                                }),
                             ))],
                             clauses: vec![],
                         }),
@@ -130,7 +143,7 @@ fn rewrite_date_format(statement: &mut ast::Statement) {
     });
 }
 
-/// Timestamp is weird in Spark. 
+/// Timestamp is weird in Spark.
 /// First of all, TIMESTAMP type is SQL in "naive", it doesn't have associated timezone. But in Spark it actually has.
 /// And Spark doesn't support TIMESTAMP WITH TIME ZONE type, so we rewrite it to just TIMESTAMP.
 /// Because of this we also rewrite calls to make_timestamptz into make_timestamp, dropping milliseconds argument,
@@ -141,11 +154,11 @@ fn rewrite_timestamps(statement: &mut ast::Statement) {
             let func_name = func.name.to_string().to_lowercase();
             if func_name == "make_timestamptz" {
                 func.name = ast::ObjectName::from(vec![ast::Ident::new("make_timestamp")]);
-                
+
                 // Remove milliseconds (not supported by Spark)
                 if let ast::FunctionArguments::List(ref mut arg_list) = &mut func.args {
                     if arg_list.args.len() >= 7 {
-                        arg_list.args.remove(6); 
+                        arg_list.args.remove(6);
                     }
                 }
             } else if func_name.starts_with("to_timestamp") {
@@ -154,7 +167,7 @@ fn rewrite_timestamps(statement: &mut ast::Statement) {
                     func.name = ast::ObjectName::from(vec![ast::Ident::new("to_timestamp")]);
                 }
 
-                // Spark's `to_timestamp` supports passing only format, while DataFusion allows to 
+                // Spark's `to_timestamp` supports passing only format, while DataFusion allows to
                 // match list of Chrono patterns. So we remove ALL patterns from this func call
                 if let ast::FunctionArguments::List(ref mut arg_list) = &mut func.args {
                     if arg_list.args.len() > 1 {
@@ -180,7 +193,9 @@ fn rewrite_intervals(statement: &mut ast::Statement) {
             if let ast::Expr::Value(value_with_span) = interval.value.as_ref() {
                 if let ast::Value::SingleQuotedString(interval_str) = &value_with_span.value {
                     *interval.value = ast::Expr::Value(ast::ValueWithSpan {
-                        value: ast::Value::SingleQuotedString(expand_interval_abbreviations(interval_str)),
+                        value: ast::Value::SingleQuotedString(expand_interval_abbreviations(
+                            interval_str,
+                        )),
                         span: value_with_span.span.clone(),
                     });
                 }
@@ -206,7 +221,7 @@ fn expand_interval_abbreviations(interval_str: &str) -> String {
         (r"\b(\d+)\s+YRS\b", "${1} YEARS"),
         (r"\b(\d+)\s+YR\b", "${1} YEAR"),
     ];
-    
+
     let mut result = interval_str.to_string();
     for (pattern, replacement) in patterns {
         result = regex::Regex::new(pattern)
@@ -225,69 +240,92 @@ fn expand_interval_abbreviations(interval_str: &str) -> String {
 /// So we rewrite logical plan to replace compound names with just the column names in projections
 /// that select data from another projection
 fn rewrite_subquery_column_identifiers(plan: LogicalPlan) -> Result<LogicalPlan> {
-    let processed_plan = plan.transform_up_with_subqueries(|p| {
-        if let LogicalPlan::Projection(projection) = &p {
-            // only touch projections that read from another projection
-            if matches!(*projection.input, LogicalPlan::Projection { .. }) {
-                let rewritten_exprs = projection.expr
-                    .iter()
-                    .map(|e| {
-                        e.clone().transform_up(|mut ex| {
-                            if let Expr::Column(c) = &mut ex {
-                                *c = Column::from_name(c.name.clone());
-                                Ok(Transformed::yes(ex))
-                            } else {
-                                Ok(Transformed::no(ex))
-                            }
-                        }).map(|t| t.data)
-                    })
-                    .collect::<std::result::Result<_, _>>()?;
-                let new_plan_node = p.with_new_exprs(rewritten_exprs, vec![(*projection.input).clone()])?;
-                return Ok(Transformed::yes(new_plan_node))
+    let processed_plan = plan
+        .transform_up_with_subqueries(|p| {
+            if let LogicalPlan::Projection(projection) = &p {
+                // only touch projections that read from another projection
+                if matches!(*projection.input, LogicalPlan::Projection { .. }) {
+                    let rewritten_exprs = projection
+                        .expr
+                        .iter()
+                        .map(|e| {
+                            e.clone()
+                                .transform_up(|mut ex| {
+                                    if let Expr::Column(c) = &mut ex {
+                                        *c = Column::from_name(c.name.clone());
+                                        Ok(Transformed::yes(ex))
+                                    } else {
+                                        Ok(Transformed::no(ex))
+                                    }
+                                })
+                                .map(|t| t.data)
+                        })
+                        .collect::<std::result::Result<_, _>>()?;
+                    let new_plan_node =
+                        p.with_new_exprs(rewritten_exprs, vec![(*projection.input).clone()])?;
+                    return Ok(Transformed::yes(new_plan_node));
+                }
             }
-        }
 
-        Ok(Transformed::no(p))
-    }).map_err(|e| {
-        VegaFusionError::unparser(format!("Failed to rewrite subquery column identifiers: {}", e))
-    })?.data;
-    
+            Ok(Transformed::no(p))
+        })
+        .map_err(|e| {
+            VegaFusionError::unparser(format!(
+                "Failed to rewrite subquery column identifiers: {}",
+                e
+            ))
+        })?
+        .data;
+
     Ok(processed_plan)
 }
 
 /// Rewrite datetime formatting expressions to be compatible with Spark
 fn rewrite_datetime_formatting(plan: LogicalPlan) -> Result<LogicalPlan> {
-    let processed_plan = plan.transform_up_with_subqueries(|p| {
-        let p = p.map_expressions(|expr| {
-            expr.transform(&|e| {
-                if let Expr::ScalarFunction(sf) = &e {
-                    if sf.name().eq_ignore_ascii_case("to_char") {
-                        let mut new_args = sf.args.clone();
-                        if new_args.len() > 1 {
-                            if let Expr::Literal(ScalarValue::Utf8(Some(format_str)), _) = &new_args[1] {
-                                let spark_format = chrono_to_spark(format_str)
-                                    .map_err(|e| datafusion_common::DataFusionError::External(Box::new(e)))?;
-                                new_args[1] = Expr::Literal(ScalarValue::Utf8(Some(spark_format)), None);
-                                let new_sf = ScalarFunction {
-                                    func: sf.func.clone(),
-                                    args: new_args,
-                                };
-                                return Ok(Transformed::yes(Expr::ScalarFunction(new_sf)));
+    let processed_plan = plan
+        .transform_up_with_subqueries(|p| {
+            let p = p
+                .map_expressions(|expr| {
+                    expr.transform(&|e| {
+                        if let Expr::ScalarFunction(sf) = &e {
+                            if sf.name().eq_ignore_ascii_case("to_char") {
+                                let mut new_args = sf.args.clone();
+                                if new_args.len() > 1 {
+                                    if let Expr::Literal(ScalarValue::Utf8(Some(format_str)), _) =
+                                        &new_args[1]
+                                    {
+                                        let spark_format =
+                                            chrono_to_spark(format_str).map_err(|e| {
+                                                datafusion_common::DataFusionError::External(
+                                                    Box::new(e),
+                                                )
+                                            })?;
+                                        new_args[1] = Expr::Literal(
+                                            ScalarValue::Utf8(Some(spark_format)),
+                                            None,
+                                        );
+                                        let new_sf = ScalarFunction {
+                                            func: sf.func.clone(),
+                                            args: new_args,
+                                        };
+                                        return Ok(Transformed::yes(Expr::ScalarFunction(new_sf)));
+                                    }
+                                }
                             }
                         }
-                    }
-                }
-                Ok(Transformed::no(e))
-            })
-        })?.data;
-        Ok(Transformed::yes(p))
-    }).map_err(|e| {
-        VegaFusionError::unparser(format!("Failed to rewrite datetime formatting: {}", e))
-    })?.data;
-    
+                        Ok(Transformed::no(e))
+                    })
+                })?
+                .data;
+            Ok(Transformed::yes(p))
+        })
+        .map_err(|e| {
+            VegaFusionError::unparser(format!("Failed to rewrite datetime formatting: {}", e))
+        })?
+        .data;
+
     Ok(processed_plan)
 }
-
 
 lazy_static! {
     /// chrono-strftime → SparkSQL pattern map
@@ -329,7 +367,7 @@ fn chrono_to_spark(fmt: &str) -> Result<String> {
                 // Collect consecutive literal characters that need quoting
                 let mut literal = String::new();
                 literal.push(c);
-                
+
                 // Continue collecting non-% characters that need quoting
                 while let Some(&next_c) = chars.peek() {
                     if next_c == '%' || !matches!(next_c, '-' | ':' | ' ' | '/' | ',' | '.') {
@@ -337,7 +375,7 @@ fn chrono_to_spark(fmt: &str) -> Result<String> {
                     }
                     literal.push(chars.next().unwrap());
                 }
-                
+
                 // Wrap the literal string in single quotes
                 out.push_str(&format!("\\'{}\\'", &literal));
             } else {
@@ -355,9 +393,9 @@ fn chrono_to_spark(fmt: &str) -> Result<String> {
         }
 
         // collect every char up to and incl. the terminating alpha
-        let mut modifier = String::new();   // '.', ':', '#' …
-        let mut digits   = String::new();   // width like 3 in %3f
-        let mut letter   = '\0';
+        let mut modifier = String::new(); // '.', ':', '#' …
+        let mut digits = String::new(); // width like 3 in %3f
+        let mut letter = '\0';
 
         while let Some(&ch) = chars.peek() {
             chars.next();
@@ -379,22 +417,29 @@ fn chrono_to_spark(fmt: &str) -> Result<String> {
                 //        %.f       -> 9  (leading dot)
                 //        %.3f      -> 3  (leading dot, fixed)
                 let width: usize = digits.parse::<usize>().unwrap_or(9).clamp(1, 9);
-                if modifier.contains('.') { out.push('.'); }
-                out.push_str(&"S".repeat(width));                // S, SS, … SSSSSSSSS
+                if modifier.contains('.') {
+                    out.push('.');
+                }
+                out.push_str(&"S".repeat(width)); // S, SS, … SSSSSSSSS
             }
 
             // -------- time-zone offsets --------
-            'z' if modifier == ":" => out.push_str("XXX"),        // %:z -> +09:30 :contentReference[oaicite:0]{index=0}
-            'z' if modifier == "::" => out.push_str("XXXXX"),     // %::z -> +09:30:00
-            'z' if modifier == ":::" => out.push_str("X"),        // %:::z -> +09
-            'z' => out.push_str("Z"),                             // %z  -> +0930
+            'z' if modifier == ":" => out.push_str("XXX"), // %:z -> +09:30 :contentReference[oaicite:0]{index=0}
+            'z' if modifier == "::" => out.push_str("XXXXX"), // %::z -> +09:30:00
+            'z' if modifier == ":::" => out.push_str("X"), // %:::z -> +09
+            'z' => out.push_str("Z"),                      // %z  -> +0930
 
             // -------- everything else that has a direct map --------
             _ => {
-                let key = &format!("{}{}", modifier, letter);     // e.g. ""+"Y", ".f", ":z"
+                let key = &format!("{}{}", modifier, letter); // e.g. ""+"Y", ".f", ":z"
                 match CHRONO_SPARK_MAP.get(key.as_str()) {
                     Some(rep) => out.push_str(rep),
-                    None      => return Err(VegaFusionError::unparser(format!("unsupported specifier %{}", key))),
+                    None => {
+                        return Err(VegaFusionError::unparser(format!(
+                            "unsupported specifier %{}",
+                            key
+                        )))
+                    }
                 }
             }
         }

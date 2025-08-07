@@ -1,14 +1,14 @@
 use datafusion::datasource::{provider_as_source, MemTable};
 use datafusion::prelude::{DataFrame, SessionContext};
 use datafusion_expr::lit;
-use datafusion_expr::{LogicalPlanBuilder, col, expr_fn::wildcard};
+use datafusion_expr::{col, expr_fn::wildcard, LogicalPlanBuilder};
 use datafusion_functions::expr_fn::to_char;
-use vegafusion_runtime::datafusion::udfs::datetime::make_timestamptz::make_timestamptz;
-use vegafusion_runtime::expression::compiler::utils::ExprHelpers;
 use std::sync::Arc;
 use vegafusion_common::arrow::array::RecordBatch;
 use vegafusion_common::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
-use vegafusion_runtime::sql::{logical_plan_to_spark_sql};
+use vegafusion_runtime::datafusion::udfs::datetime::make_timestamptz::make_timestamptz;
+use vegafusion_runtime::expression::compiler::utils::ExprHelpers;
+use vegafusion_runtime::sql::logical_plan_to_spark_sql;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -23,7 +23,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Field::new("customer_name", DataType::Utf8, false),
         Field::new("customer_age", DataType::Float32, false),
         Field::new("customer_email", DataType::Utf8, true),
-        Field::new("order_date", DataType::Timestamp(TimeUnit::Millisecond, None), false),
+        Field::new(
+            "order_date",
+            DataType::Timestamp(TimeUnit::Millisecond, None),
+            false,
+        ),
     ]));
 
     // Create an empty RecordBatch with the schema
@@ -33,12 +37,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mem_table = MemTable::try_new(schema.clone(), vec![vec![empty_batch]])?;
 
     // Create a logical plan by scanning the table
-    let base_plan = LogicalPlanBuilder::scan(
-        "orders", 
-        provider_as_source(Arc::new(mem_table)), 
-        None
-    )?
-    .build()?;
+    let base_plan =
+        LogicalPlanBuilder::scan("orders", provider_as_source(Arc::new(mem_table)), None)?
+            .build()?;
 
     println!("Schema:");
     for field in schema.fields() {
@@ -50,25 +51,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let df_schema = df.schema().clone();
 
     // Add a new column with timestamp cast to string
-    let selected_df = df
-        .select(vec![
-            wildcard(),
-            col("order_date").try_cast_to(&DataType::Timestamp(
-                TimeUnit::Millisecond,
-                Some("America/Los_Angeles".to_string().into()),
-            ), &df_schema)?.alias("order_date_tz").into(),
-            to_char(col("order_date"), lit("%Y-%m-%d %H:%M:%S")).alias("order_date_formatted").into(),
-            make_timestamptz(
-                lit(2012),
-                lit(1),
-                lit(1),
-                lit(0),
-                lit(0),
-                lit(0),
-                lit(0),
-                "America/Los_Angeles",
-            ).alias("made_ts").into(),
-        ])?;
+    let selected_df = df.select(vec![
+        wildcard(),
+        col("order_date")
+            .try_cast_to(
+                &DataType::Timestamp(
+                    TimeUnit::Millisecond,
+                    Some("America/Los_Angeles".to_string().into()),
+                ),
+                &df_schema,
+            )?
+            .alias("order_date_tz")
+            .into(),
+        to_char(col("order_date"), lit("%Y-%m-%d %H:%M:%S"))
+            .alias("order_date_formatted")
+            .into(),
+        make_timestamptz(
+            lit(2012),
+            lit(1),
+            lit(1),
+            lit(0),
+            lit(0),
+            lit(0),
+            lit(0),
+            "America/Los_Angeles",
+        )
+        .alias("made_ts")
+        .into(),
+    ])?;
 
     let plan = selected_df.logical_plan().clone();
 
@@ -91,4 +101,4 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
-} 
+}

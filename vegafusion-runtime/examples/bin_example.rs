@@ -1,12 +1,11 @@
-use vegafusion_core::runtime::VegaFusionRuntimeTrait;
-use vegafusion_core::spec::chart::ChartSpec;
-use vegafusion_runtime::sql::logical_plan_to_spark_sql;
-use vegafusion_runtime::task_graph::runtime::VegaFusionRuntime;
-use vegafusion_core::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
-use vegafusion_core::task_graph::task_value::TaskValue;
 use datafusion_expr::LogicalPlan;
 use std::{collections::HashMap, sync::Arc};
-
+use vegafusion_core::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+use vegafusion_core::runtime::VegaFusionRuntimeTrait;
+use vegafusion_core::spec::chart::ChartSpec;
+use vegafusion_core::task_graph::task_value::TaskValue;
+use vegafusion_runtime::sql::logical_plan_to_spark_sql;
+use vegafusion_runtime::task_graph::runtime::VegaFusionRuntime;
 
 /// This example demonstrates how to use the `pre_transform_spec` method to create a new
 /// spec with supported transforms pre-evaluated.
@@ -24,14 +23,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     datasets.insert("sales_data_1kk".to_string(), schema);
 
     let (transformed_spec, transformed_datasets, warnings) = runtime
-        .pre_transform_logical_plan(
-            &spec,
-            datasets,
-            "UTC",
-            &None,
-            false,
-            vec![],
-        )
+        .pre_transform_logical_plan(&spec, datasets, "UTC", &None, false, vec![])
         .await
         .unwrap();
 
@@ -48,10 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let sql = logical_plan_to_spark_sql(&plan)?;
-    println!(
-        "{}",
-        sql
-    );
+    println!("{}", sql);
 
     Ok(())
 }

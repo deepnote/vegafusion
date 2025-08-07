@@ -869,22 +869,25 @@ class VegaFusionRuntime:
               * `"name"`: dataset name
               * `"logical_plan"`: json representation of LogicalPlan (when applicable)
               * `"data"`: materialized data (when applicable)
-              * `"sparksql"`: Spark-compatible SQL query (when output_format="sparksql" and logical_plan exists)
+              * `"sparksql"`: Spark-compatible SQL query (when output_format="sparksql"
+              and logical_plan exists)
             * A list of warnings as dictionaries. Each warning dict has a ``'type'``
               key indicating the warning type, and a ``'message'`` key containing
               a description of the warning.
         """
         local_tz = local_tz or get_local_tz()
 
-        new_spec, export_updates, warnings = self.runtime.pre_transform_logical_plan_vendor(
-            spec,
-            output_format,
-            inline_dataset_schemas or {},
-            local_tz=local_tz,
-            default_input_tz=default_input_tz,
-            preserve_interactivity=preserve_interactivity,
-            keep_signals=parse_variables(keep_signals),
-            keep_datasets=parse_variables(keep_datasets),
+        new_spec, export_updates, warnings = (
+            self.runtime.pre_transform_logical_plan_vendor(
+                spec,
+                output_format,
+                inline_dataset_schemas or {},
+                local_tz=local_tz,
+                default_input_tz=default_input_tz,
+                preserve_interactivity=preserve_interactivity,
+                keep_signals=parse_variables(keep_signals),
+                keep_datasets=parse_variables(keep_datasets),
+            )
         )
 
         return new_spec, export_updates, warnings

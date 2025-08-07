@@ -14,7 +14,8 @@ use vegafusion_core::proto::gen::pretransform::pre_transform_extract_warning::Wa
 use vegafusion_core::proto::gen::pretransform::pre_transform_logical_plan_warning::WarningType as LogicalPlanWarningType;
 use vegafusion_core::proto::gen::pretransform::pre_transform_values_warning::WarningType as ValueWarningType;
 use vegafusion_core::proto::gen::pretransform::{
-    PreTransformExtractOpts, PreTransformSpecOpts, PreTransformValuesOpts, PreTransformVariable, PreTransformLogicalPlanOpts,
+    PreTransformExtractOpts, PreTransformLogicalPlanOpts, PreTransformSpecOpts,
+    PreTransformValuesOpts, PreTransformVariable,
 };
 use vegafusion_core::proto::gen::tasks::{TzConfig, Variable};
 use vegafusion_runtime::task_graph::GrpcVegaFusionRuntime;
@@ -28,7 +29,7 @@ use vegafusion_common::data::table::VegaFusionTable;
 use vegafusion_core::data::dataset::VegaFusionDataset;
 use vegafusion_core::planning::plan::{PlannerConfig, PreTransformSpecWarningSpec, SpecPlan};
 use vegafusion_core::planning::projection_pushdown::get_column_usage as rs_get_column_usage;
-use vegafusion_core::planning::watch::{ExportUpdateJSON, WatchPlan, ExportUpdateNamespace};
+use vegafusion_core::planning::watch::{ExportUpdateJSON, ExportUpdateNamespace, WatchPlan};
 
 use vegafusion_core::spec::chart::ChartSpec;
 use vegafusion_core::task_graph::graph::ScopedVariable;
@@ -553,7 +554,6 @@ impl PyVegaFusionRuntime {
         }
 
         let (client_spec, export_updates, warnings) = py.allow_threads(|| {
-
             self.tokio_runtime
                 .block_on(self.runtime.pre_transform_logical_plan(
                     &spec,
@@ -689,7 +689,7 @@ impl PyVegaFusionRuntime {
                         default_input_tz,
                         preserve_interactivity,
                         keep_variables,
-                    }
+                    },
                 ))
         })?;
 
@@ -712,10 +712,11 @@ impl PyVegaFusionRuntime {
                         // TODO: we probably want more flexible serialization format than pg_json, but protobuf fails with our memtable
                         let lp_str = format!("{}", plan.display_pg_json());
                         py_export_dict.set_item("logical_plan", PyString::new(py, &lp_str))?;
-                        
+
                         // Add vendor-specific SQL generation for logical plans
                         if output_format == "sparksql" {
-                            let spark_sql = vegafusion_runtime::sql::logical_plan_to_spark_sql(&plan)?;
+                            let spark_sql =
+                                vegafusion_runtime::sql::logical_plan_to_spark_sql(&plan)?;
                             py_export_dict.set_item("sparksql", spark_sql)?;
                         }
                     }

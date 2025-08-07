@@ -1,17 +1,19 @@
 use datafusion::datasource::{provider_as_source, MemTable};
 use datafusion::prelude::{DataFrame, SessionContext};
-use datafusion_expr::{col, lit, LogicalPlanBuilder, Expr};
+use datafusion_expr::{col, lit, Expr, LogicalPlanBuilder};
+use datafusion_functions::expr_fn::{to_char, to_timestamp_seconds};
 use std::sync::Arc;
 use vegafusion_common::arrow::array::RecordBatch;
 use vegafusion_common::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use vegafusion_common::column::flat_col;
 use vegafusion_runtime::data::util::DataFrameUtils;
-use vegafusion_runtime::sql::logical_plan_to_spark_sql;
-use datafusion_functions::expr_fn::{to_char, to_timestamp_seconds};
-use vegafusion_runtime::expression::compiler::utils::ExprHelpers;
 use vegafusion_runtime::datafusion::udfs::datetime::make_timestamptz::make_timestamptz;
+use vegafusion_runtime::expression::compiler::utils::ExprHelpers;
+use vegafusion_runtime::sql::logical_plan_to_spark_sql;
 
-async fn create_test_dataframe(schema_fields: Vec<Field>) -> Result<DataFrame, Box<dyn std::error::Error>> {
+async fn create_test_dataframe(
+    schema_fields: Vec<Field>,
+) -> Result<DataFrame, Box<dyn std::error::Error>> {
     let ctx = SessionContext::new();
 
     let schema = Arc::new(Schema::new(schema_fields));
@@ -19,35 +21,31 @@ async fn create_test_dataframe(schema_fields: Vec<Field>) -> Result<DataFrame, B
     let empty_batch = RecordBatch::new_empty(schema.clone());
     let mem_table = MemTable::try_new(schema.clone(), vec![vec![empty_batch]])?;
 
-    let base_plan = LogicalPlanBuilder::scan(
-        "test_table", 
-        provider_as_source(Arc::new(mem_table)), 
-        None
-    )?
-    .build()?;
+    let base_plan =
+        LogicalPlanBuilder::scan("test_table", provider_as_source(Arc::new(mem_table)), None)?
+            .build()?;
 
     Ok(DataFrame::new(ctx.state(), base_plan))
 }
 
 #[tokio::test]
-async fn test_logical_plan_to_spark_sql_rewrites_row_number() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_logical_plan_to_spark_sql_rewrites_row_number(
+) -> Result<(), Box<dyn std::error::Error>> {
     let schema_fields = vec![
         Field::new("id", DataType::Int32, false),
         Field::new("name", DataType::Utf8, false),
         Field::new("value", DataType::Float64, false),
     ];
-    
+
     let df = create_test_dataframe(schema_fields).await?;
-    
-    let indexed_df = df
-        .filter(col("value").gt(lit(0.0)))?
-        .with_index()?;
+
+    let indexed_df = df.filter(col("value").gt(lit(0.0)))?.with_index()?;
 
     let plan = indexed_df.logical_plan().clone();
     let spark_sql = logical_plan_to_spark_sql(&plan)?;
 
     let expected_sql = "SELECT row_number() OVER (ORDER BY monotonically_increasing_id()) AS _vf_order, test_table.id, test_table.name, test_table.value FROM test_table WHERE test_table.value > 0.0";
-    
+
     assert_eq!(
         spark_sql.trim(),
         expected_sql,
@@ -58,14 +56,15 @@ async fn test_logical_plan_to_spark_sql_rewrites_row_number() -> Result<(), Box<
 }
 
 #[tokio::test]
-async fn test_logical_plan_to_spark_sql_rewrites_inf_and_nan() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_logical_plan_to_spark_sql_rewrites_inf_and_nan(
+) -> Result<(), Box<dyn std::error::Error>> {
     let schema_fields = vec![
         Field::new("id", DataType::Int32, false),
         Field::new("value", DataType::Float64, false),
     ];
-    
+
     let df = create_test_dataframe(schema_fields).await?;
-    
+
     // Create a query that will generate NaN and infinity literals in the logical plan
     let filtered_df = df
         .filter(col("value").gt(lit(f64::NAN)))?
@@ -78,38 +77,32 @@ async fn test_logical_plan_to_spark_sql_rewrites_inf_and_nan() -> Result<(), Box
     let expected_sql = "SELECT * FROM test_table WHERE test_table.value > float('-inf') AND test_table.value < float('inf') AND test_table.value > float('NaN')";
 
     assert_eq!(
-        spark_sql,
-        expected_sql,
+        spark_sql, expected_sql,
         "Should wrap NaN and Infinity literals in float()"
     );
     Ok(())
 }
 
 #[tokio::test]
-async fn test_logical_plan_to_spark_sql_rewrites_subquery_column_identifiers() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_logical_plan_to_spark_sql_rewrites_subquery_column_identifiers(
+) -> Result<(), Box<dyn std::error::Error>> {
     let schema_fields = vec![
         Field::new("customer_name", DataType::Utf8, false),
         Field::new("customer_age", DataType::Float32, false),
     ];
-    
+
     let df = create_test_dataframe(schema_fields).await?;
-    
+
     // Create nested projections that would generate compound column names
     let nested_df = df
-        .select(vec![
-            flat_col("customer_name"),
-            flat_col("customer_age"),
-        ])?
-        .select(vec![
-            flat_col("customer_name"), 
-            flat_col("customer_age"),
-        ])?;
+        .select(vec![flat_col("customer_name"), flat_col("customer_age")])?
+        .select(vec![flat_col("customer_name"), flat_col("customer_age")])?;
 
     let plan = nested_df.logical_plan().clone();
     let spark_sql = logical_plan_to_spark_sql(&plan)?;
 
     let expected_sql = "SELECT customer_name, customer_age FROM (SELECT test_table.customer_name, test_table.customer_age FROM test_table)";
-    
+
     assert_eq!(
         spark_sql.trim(),
         expected_sql,
@@ -120,21 +113,25 @@ async fn test_logical_plan_to_spark_sql_rewrites_subquery_column_identifiers() -
 }
 
 #[tokio::test]
-async fn test_logical_plan_to_spark_sql_chrono_formatting() -> Result<(), Box<dyn std::error::Error>> {
-    let schema_fields = vec![
-        Field::new("timestamp_col", DataType::Timestamp(TimeUnit::Millisecond, Some("UTC".into())), false),
-    ];
-    
+async fn test_logical_plan_to_spark_sql_chrono_formatting() -> Result<(), Box<dyn std::error::Error>>
+{
+    let schema_fields = vec![Field::new(
+        "timestamp_col",
+        DataType::Timestamp(TimeUnit::Millisecond, Some("UTC".into())),
+        false,
+    )];
+
     let df = create_test_dataframe(schema_fields).await?;
-    
+
     // Test basic datetime format conversion: %Y-%m-%d %H:%M:%S -> yyyy-MM-dd HH:mm:ss
-    let df_basic = df
-        .clone()
-        .select(vec![to_char(col("timestamp_col"), lit("%Y-%m-%d %H:%M:%S"))])?;
-    
+    let df_basic = df.clone().select(vec![to_char(
+        col("timestamp_col"),
+        lit("%Y-%m-%d %H:%M:%S"),
+    )])?;
+
     let plan_basic = df_basic.logical_plan().clone();
     let spark_sql_basic = logical_plan_to_spark_sql(&plan_basic)?;
-    
+
     assert!(
         spark_sql_basic.contains("yyyy-MM-dd HH:mm:ss"),
         "Basic datetime format should be converted to Spark format. Got: {}",
@@ -145,10 +142,10 @@ async fn test_logical_plan_to_spark_sql_chrono_formatting() -> Result<(), Box<dy
     let df_frac = df
         .clone()
         .select(vec![to_char(col("timestamp_col"), lit("%.3f"))])?;
-    
+
     let plan_frac = df_frac.logical_plan().clone();
     let spark_sql_frac = logical_plan_to_spark_sql(&plan_frac)?;
-    
+
     assert!(
         spark_sql_frac.contains(".SSS"),
         "Fractional seconds format should be converted to Spark format. Got: {}",
@@ -156,13 +153,14 @@ async fn test_logical_plan_to_spark_sql_chrono_formatting() -> Result<(), Box<dy
     );
 
     // Test full ISO format: %Y-%m-%dT%H:%M:%S%.f%:z -> yyyy-MM-dd'T'HH:mm:ss.SSSSSSSSSXXX
-    let df_iso = df
-        .clone()
-        .select(vec![to_char(col("timestamp_col"), lit("%Y-%m-%dT%H:%M:%S%.f%:z"))])?;
-    
+    let df_iso = df.clone().select(vec![to_char(
+        col("timestamp_col"),
+        lit("%Y-%m-%dT%H:%M:%S%.f%:z"),
+    )])?;
+
     let plan_iso = df_iso.logical_plan().clone();
     let spark_sql_iso = logical_plan_to_spark_sql(&plan_iso)?;
-    
+
     assert!(
         // Double single quote because it will be inside SQL string and has to be escaped
         spark_sql_iso.contains("yyyy-MM-dd''T''HH:mm:ss.SSSSSSSSSXXX"),
@@ -174,36 +172,45 @@ async fn test_logical_plan_to_spark_sql_chrono_formatting() -> Result<(), Box<dy
 }
 
 #[tokio::test]
-async fn test_logical_plan_to_spark_sql_rewrites_timestamps() -> Result<(), Box<dyn std::error::Error>> {
-    let schema_fields = vec![
-        Field::new("order_date", DataType::Timestamp(TimeUnit::Millisecond, None), false),
-    ];
-    
+async fn test_logical_plan_to_spark_sql_rewrites_timestamps(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let schema_fields = vec![Field::new(
+        "order_date",
+        DataType::Timestamp(TimeUnit::Millisecond, None),
+        false,
+    )];
+
     let df = create_test_dataframe(schema_fields).await?;
     let df_schema = df.schema().clone();
-    
+
     // Create operations that will generate make_timestamptz function calls, TIMESTAMP WITH TIME ZONE casts, and to_timestamp_seconds calls
-    let timestamp_df = df
-        .select(vec![
-            // This should create a cast to TIMESTAMP WITH TIME ZONE, which should be rewritten to TIMESTAMP
-            col("order_date").try_cast_to(&DataType::Timestamp(
-                TimeUnit::Millisecond,
-                Some("America/Los_Angeles".to_string().into()),
-            ), &df_schema)?.alias("order_date_tz"),
-            // This should create a make_timestamptz call, which should be rewritten to make_timestamp with 7th arg dropped
-            make_timestamptz(
-                lit(2023),
-                lit(12),
-                lit(25),
-                lit(10),
-                lit(30),
-                lit(45),
-                lit(123), // This 7th argument (milliseconds) should be dropped
-                "UTC",
-            ).alias("made_timestamp").into(),
-            // This should create a to_timestamp_seconds call, which should be rewritten to to_timestamp
-            to_timestamp_seconds(vec![lit("2023-12-25 10:30:45")]).alias("parsed_timestamp"),
-        ])?;
+    let timestamp_df = df.select(vec![
+        // This should create a cast to TIMESTAMP WITH TIME ZONE, which should be rewritten to TIMESTAMP
+        col("order_date")
+            .try_cast_to(
+                &DataType::Timestamp(
+                    TimeUnit::Millisecond,
+                    Some("America/Los_Angeles".to_string().into()),
+                ),
+                &df_schema,
+            )?
+            .alias("order_date_tz"),
+        // This should create a make_timestamptz call, which should be rewritten to make_timestamp with 7th arg dropped
+        make_timestamptz(
+            lit(2023),
+            lit(12),
+            lit(25),
+            lit(10),
+            lit(30),
+            lit(45),
+            lit(123), // This 7th argument (milliseconds) should be dropped
+            "UTC",
+        )
+        .alias("made_timestamp")
+        .into(),
+        // This should create a to_timestamp_seconds call, which should be rewritten to to_timestamp
+        to_timestamp_seconds(vec![lit("2023-12-25 10:30:45")]).alias("parsed_timestamp"),
+    ])?;
 
     let plan = timestamp_df.logical_plan().clone();
     let spark_sql = logical_plan_to_spark_sql(&plan)?;
@@ -219,30 +226,31 @@ async fn test_logical_plan_to_spark_sql_rewrites_timestamps() -> Result<(), Box<
 }
 
 #[tokio::test]
-async fn test_logical_plan_to_spark_sql_rewrites_intervals() -> Result<(), Box<dyn std::error::Error>> {
-    let schema_fields = vec![
-        Field::new("timestamp_col", DataType::Timestamp(TimeUnit::Millisecond, None), false),
-    ];
-    
+async fn test_logical_plan_to_spark_sql_rewrites_intervals(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let schema_fields = vec![Field::new(
+        "timestamp_col",
+        DataType::Timestamp(TimeUnit::Millisecond, None),
+        false,
+    )];
+
     let df = create_test_dataframe(schema_fields).await?;
-    
-    // Create a query that will generate interval expressions with abbreviated names  
-    let interval_df = df
-        .select(vec![
-            col("timestamp_col") + lit(datafusion_common::ScalarValue::IntervalYearMonth(Some(1)))
-        ])?;
+
+    // Create a query that will generate interval expressions with abbreviated names
+    let interval_df = df.select(vec![
+        col("timestamp_col") + lit(datafusion_common::ScalarValue::IntervalYearMonth(Some(1))),
+    ])?;
 
     let plan = interval_df.logical_plan().clone();
     let spark_sql = logical_plan_to_spark_sql(&plan)?;
 
-    let expected_sql = "SELECT test_table.timestamp_col + INTERVAL '0 YEARS 1 MONTHS' FROM test_table";
-    
+    let expected_sql =
+        "SELECT test_table.timestamp_col + INTERVAL '0 YEARS 1 MONTHS' FROM test_table";
+
     assert_eq!(
-        spark_sql,
-        expected_sql,
+        spark_sql, expected_sql,
         "Generated SQL should expand interval abbreviations to full names"
     );
 
     Ok(())
 }
-

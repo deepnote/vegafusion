@@ -29,9 +29,11 @@ def main():
             pa.field("IMDB Votes", pa.int64()),
         ]
     )
-    
-    transformed_spec, export_updates, warnings = vf.runtime.pre_transform_logical_plan_vendor(
-        spec, output_format="sparksql", inline_dataset_schemas={"movies": schema}
+
+    transformed_spec, export_updates, warnings = (
+        vf.runtime.pre_transform_logical_plan_vendor(
+            spec, output_format="sparksql", inline_dataset_schemas={"movies": schema}
+        )
     )
     for dataset in export_updates:
         print("Dataset", dataset["name"])
@@ -193,4 +195,4 @@ def get_spec() -> dict[str, Any]:
 
 
 if __name__ == "__main__":
-    main() 
+    main()
