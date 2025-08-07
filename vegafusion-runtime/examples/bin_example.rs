@@ -1,4 +1,3 @@
-use datafusion_expr::LogicalPlan;
 use std::{collections::HashMap, sync::Arc};
 use vegafusion_core::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use vegafusion_core::proto::gen::pretransform::PreTransformLogicalPlanOpts;
@@ -30,7 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         keep_variables: vec![],
     };
 
-    let (transformed_spec, transformed_datasets, warnings) = runtime
+    let (_transformed_spec, transformed_datasets, warnings) = runtime
         .pre_transform_logical_plan(&spec, datasets, &options)
         .await
         .unwrap();

@@ -57,11 +57,11 @@ pub fn logical_plan_to_spark_sql(plan: &LogicalPlan) -> Result<String> {
 }
 
 /// When adding row_number() DataFusion generates SQL like this:
-/// ```
+/// ```sql
 /// row_number() ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
 /// ```
 /// Which is not compatible with Spark. For Spark we rewrite AST to be
-/// ```
+/// ```sql
 /// row_number() OVER (ORDER BY monotonically_increasing_id())
 /// ```
 fn rewrite_row_number(statement: &mut ast::Statement) {
@@ -233,7 +233,7 @@ fn expand_interval_abbreviations(interval_str: &str) -> String {
 }
 
 /// DataFusion logical plan which uses compound names when selecting from subquery:
-/// ```
+/// ```sql
 /// SELECT orders.customer_name, orders.customer_age FROM (SELECT orders.customer_name, orders.customer_age FROM orders)
 /// ```
 /// This is not a valid SQL, as `orders` isn't available once we get out of first query.
