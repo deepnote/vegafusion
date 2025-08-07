@@ -1,6 +1,6 @@
 [project]
 name = "deepnote_vegafusion"
-version = "2.0.2.post1+deepnote"
+version = "2.0.3"
 description = "Core tools for using VegaFusion from Python"
 readme = "README.md"
 license = {file = "LICENSE"}
