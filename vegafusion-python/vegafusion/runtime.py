@@ -871,6 +871,7 @@ class VegaFusionRuntime:
               * `"data"`: materialized data (when applicable)
               * `"sparksql"`: Spark-compatible SQL query (when output_format="sparksql"
               and logical_plan exists)
+              # TODO: undocumented namespace property
             * A list of warnings as dictionaries. Each warning dict has a ``'type'``
               key indicating the warning type, and a ``'message'`` key containing
               a description of the warning.

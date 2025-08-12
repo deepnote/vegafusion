@@ -5,7 +5,7 @@ import pytest
 
 import pandas as pd
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col
+from pyspark.sql.functions import col, to_utc_timestamp, current_timezone
 import vl_convert as vlc
 import vegafusion as vf
 import pyarrow as pa
@@ -41,15 +41,16 @@ def spark():
         .getOrCreate()
     )
 
-    # In the toolkit we fork Spark session and explicitly switch it to UTC
-    # as it affects temporal fields handling
+    # TODO: this is required for properly handling temporal. We need to check if we can work around different
+    # timezone or if we should require users to setup their Spark sessions to operate in UTC
     session.sql("SET TIME ZONE 'UTC'")
 
     sales_data_df = session.read.parquet(str(SALES_DATA_PATH))
 
     # Convert datetime column from bigint (nanoseconds) to actual timestamp
     sales_data_df = sales_data_df.withColumn(
-        "datetime", (col("datetime") / 1e9).cast("timestamp")
+        "datetime", 
+        to_utc_timestamp((col("datetime") / 1e9).cast("timestamp"), current_timezone())
     )
 
     sales_data_df.createOrReplaceTempView("sales_data_1kk")
@@ -59,9 +60,6 @@ def spark():
     session.stop()
 
 
-# Discover all spec fixtures once so that *pytest* can parametrise the test
-
-# Filter out any non-Path values that might have slipped in (e.g. pytest.NOTSET)
 _SPEC_FILES = [p for p in _discover_spec_files() if isinstance(p, Path)]
 
 
