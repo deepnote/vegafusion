@@ -1,4 +1,3 @@
-
 use crate::datafusion::context::make_datafusion_context;
 use crate::plan_executor::DataFusionPlanExecutor;
 use crate::task_graph::cache::VegaFusionCache;
@@ -18,13 +17,13 @@ use std::sync::Arc;
 use vegafusion_common::arrow::datatypes::SchemaRef;
 use vegafusion_common::datafusion_expr::LogicalPlanBuilder;
 use vegafusion_core::data::dataset::VegaFusionDataset;
-use vegafusion_core::runtime::PlanExecutor;
 use vegafusion_core::error::{Result, ResultWithContext, VegaFusionError};
 use vegafusion_core::planning::watch::{ExportUpdate, ExportUpdateArrow};
 use vegafusion_core::proto::gen::tasks::inline_dataset::Dataset;
 use vegafusion_core::proto::gen::tasks::{
     task::TaskKind, InlineDataset, InlineDatasetTable, NodeValueIndex, TaskGraph,
 };
+use vegafusion_core::runtime::PlanExecutor;
 use vegafusion_core::runtime::VegaFusionRuntimeTrait;
 use vegafusion_core::task_graph::task_value::{NamedTaskValue, TaskValue};
 
@@ -149,22 +148,17 @@ impl VegaFusionRuntimeTrait for VegaFusionRuntime {
         plan_executor: Option<&dyn PlanExecutor>,
     ) -> Result<Vec<ExportUpdateArrow>> {
         let executor = plan_executor.unwrap_or(&self.default_executor);
-        
+
         let materialization_futures: Vec<_> = export_updates
             .into_iter()
-            .map(|export_update| {
-                async move {
-                    let materialized_value = export_update
-                        .value
-                        .to_materialized(executor)
-                        .await?;
-                    Ok::<_, VegaFusionError>(ExportUpdateArrow {
-                        namespace: export_update.namespace,
-                        name: export_update.name,
-                        scope: export_update.scope,
-                        value: materialized_value,
-                    })
-                }
+            .map(|export_update| async move {
+                let materialized_value = export_update.value.to_materialized(executor).await?;
+                Ok::<_, VegaFusionError>(ExportUpdateArrow {
+                    namespace: export_update.namespace,
+                    name: export_update.name,
+                    scope: export_update.scope,
+                    value: materialized_value,
+                })
             })
             .collect();
 

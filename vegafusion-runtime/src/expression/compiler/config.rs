@@ -23,7 +23,7 @@ impl Default for CompilationConfig {
     fn default() -> Self {
         let ctx = Arc::new(make_datafusion_context());
         let plan_executor = Arc::new(DataFusionPlanExecutor::new(ctx)) as Arc<dyn PlanExecutor>;
-        
+
         Self {
             signal_scope: Default::default(),
             data_scope: Default::default(),

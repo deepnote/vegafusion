@@ -10,7 +10,7 @@ use crate::{
         pretransform::PreTransformSpecWarning,
         tasks::{NodeValueIndex, TaskGraph, TzConfig, Variable, VariableNamespace},
     },
-    runtime::{VegaFusionRuntimeTrait, PlanExecutor},
+    runtime::{PlanExecutor, VegaFusionRuntimeTrait},
     spec::chart::ChartSpec,
     task_graph::{graph::ScopedVariable, task_value::TaskValue},
 };
@@ -113,7 +113,9 @@ impl ChartState {
             });
         }
 
-        let init_arrow = runtime.materialize_export_updates(init, plan_executor).await?;
+        let init_arrow = runtime
+            .materialize_export_updates(init, plan_executor)
+            .await?;
 
         let (transformed_spec, warnings) =
             apply_pre_transform_datasets(&spec, &plan, init_arrow, opts.row_limit)?;

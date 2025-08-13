@@ -2,11 +2,20 @@ from __future__ import annotations
 
 import sys
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, Callable, Literal, Protocol, TypedDict, Union, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Literal,
+    Protocol,
+    TypedDict,
+    Union,
+    cast,
+)
 
 # Delay narwhals import to avoid eager pandas import
 # We'll import narwhals inside functions to avoid eager pandas import
-from arro3.core import Table, Schema
+from arro3.core import Schema, Table
 
 from vegafusion._vegafusion import get_cpu_count, get_virtual_memory
 from vegafusion.transformer import DataFrameLike
@@ -30,15 +39,18 @@ if TYPE_CHECKING:
 
 class PlanExecutorProtocol(Protocol):
     """Protocol for objects with execute_plan method."""
-    def execute_plan(self, logical_plan_json: str) -> "pa.Table":
+
+    def execute_plan(self, logical_plan_json: str) -> pa.Table:
         """Execute a logical plan and return an Arrow table."""
         ...
 
 
 # Type alias for plan executors
 PlanExecutor = Union[
-    Callable[[str], "pa.Table"],  # Callable that takes logical plan JSON and returns Arrow table
-    PlanExecutorProtocol,         # Object with execute_plan method
+    Callable[
+        [str], "pa.Table"
+    ],  # Callable that takes logical plan JSON and returns Arrow table
+    PlanExecutorProtocol,  # Object with execute_plan method
 ]
 
 # This type isn't defined in the grpcio package, so let's at least name it
@@ -267,8 +279,8 @@ class VegaFusionRuntime:
 
         Args:
             inline_datasets: A dictionary from dataset names to pandas DataFrames,
-                pyarrow Tables, or pyarrow Schemas. Inline datasets may be referenced by the input
-                specification using the following url syntax
+                pyarrow Tables, or pyarrow Schemas. Inline datasets may be referenced
+                by the input specification using the following url syntax
                 'vegafusion+dataset://{dataset_name}' or 'table://{dataset_name}'.
             inline_dataset_usage: Columns that are referenced by datasets. If no
                 entry is found, then all columns should be included.
@@ -394,9 +406,9 @@ class VegaFusionRuntime:
                 transformations are applied even if they break the original interactive
                 behavior of the chart.
             inline_datasets: A dict from dataset names to pandas DataFrames, pyarrow
-                Tables, or pyarrow Schemas. Inline datasets may be referenced by the input specification
-                using the following url syntax 'vegafusion+dataset://{dataset_name}' or
-                'table://{dataset_name}'.
+                Tables, or pyarrow Schemas. Inline datasets may be referenced by the
+                input specification using the following url syntax
+                'vegafusion+dataset://{dataset_name}' or 'table://{dataset_name}'.
             keep_signals: Signals from the input spec that must be included in the
                 pre-transformed spec, even if they are no longer referenced.
                 A list with elements that are either:
@@ -415,7 +427,8 @@ class VegaFusionRuntime:
                   as a list of integers
             executor: A custom executor for logical plan execution. Can be either:
 
-                * A callable that takes a logical plan JSON string and returns an Arrow table
+                * A callable that takes a logical plan JSON string and returns an
+                  Arrow table
                 * An object with an execute_plan method that has the same signature
                 * None to use the default DataFusion executor
 
@@ -479,12 +492,13 @@ class VegaFusionRuntime:
                 rows and a RowLimitExceeded warning will be included in the ChartState's
                 warnings list.
             inline_datasets: A dict from dataset names to pandas DataFrames, pyarrow
-                Tables, or pyarrow Schemas. Inline datasets may be referenced by the input specification
-                using the following url syntax 'vegafusion+dataset://{dataset_name}' or
-                'table://{dataset_name}'.
+                Tables, or pyarrow Schemas. Inline datasets may be referenced by the
+                input specification using the following url syntax
+                'vegafusion+dataset://{dataset_name}' or 'table://{dataset_name}'.
             executor: A custom executor for logical plan execution. Can be either:
 
-                * A callable that takes a logical plan JSON string and returns an Arrow table
+                * A callable that takes a logical plan JSON string and returns an
+                  Arrow table
                 * An object with an execute_plan method that has the same signature
                 * None to use the default DataFusion executor
 
@@ -497,7 +511,12 @@ class VegaFusionRuntime:
         )
         return ChartState(
             self.runtime.new_chart_state(
-                spec, local_tz, default_input_tz, row_limit, inline_arrow_dataset, executor
+                spec,
+                local_tz,
+                default_input_tz,
+                row_limit,
+                inline_arrow_dataset,
+                executor,
             )
         )
 
@@ -534,9 +553,9 @@ class VegaFusionRuntime:
                 rows and a RowLimitExceeded warning will be included in the resulting
                 warnings list.
             inline_datasets: A dict from dataset names to pandas DataFrames, pyarrow
-                Tables, or pyarrow Schemas. Inline datasets may be referenced by the input specification
-                using the following url syntax 'vegafusion+dataset://{dataset_name}'
-                or 'table://{dataset_name}'.
+                Tables, or pyarrow Schemas. Inline datasets may be referenced by the
+                input specification using the following url syntax
+                'vegafusion+dataset://{dataset_name}' or 'table://{dataset_name}'.
             trim_unused_columns: If True, unused columns are removed from returned
                 datasets.
             dataset_format: Format for returned datasets. One of:
@@ -720,7 +739,8 @@ class VegaFusionRuntime:
                   as a list of integers
             executor: A custom executor for logical plan execution. Can be either:
 
-                * A callable that takes a logical plan JSON string and returns an Arrow table
+                * A callable that takes a logical plan JSON string and returns an
+                  Arrow table
                 * An object with an execute_plan method that has the same signature
                 * None to use the default DataFusion executor
 
@@ -797,9 +817,10 @@ class VegaFusionRuntime:
                 than being pre-transformed. If False, then all possible data
                 transformations are applied even if they break the original interactive
                 behavior of the chart.
-            inline_datasets: A dictionary mapping dataset names to PyArrow tables, 
-                schemas, or other supported data formats. These datasets can be referenced
-                in the spec using "vegafusion+dataset://{dataset_name}" URLs.
+            inline_datasets: A dictionary mapping dataset names to PyArrow tables,
+                schemas, or other supported data formats. These datasets can be
+                referenced in the spec using "vegafusion+dataset://{dataset_name}"
+                URLs.
 
             keep_signals: Signals from the input spec that must be included in the
                 pre-transformed spec, even if they are no longer referenced.

@@ -90,7 +90,7 @@ pub fn build_compilation_config(
     }
 
     let plan_executor = Arc::new(DataFusionPlanExecutor::new(ctx));
-    
+
     // CompilationConfig is not Send, so use local scope here to make sure it's dropped
     // before the call to await below.
     CompilationConfig {
@@ -534,7 +534,8 @@ impl TaskCall for DataValuesTask {
         {
             let pipeline = self.pipeline.as_ref().unwrap();
 
-            let config = build_compilation_config(&self.input_vars(), values, tz_config, ctx.clone());
+            let config =
+                build_compilation_config(&self.input_vars(), values, tz_config, ctx.clone());
 
             // Process datetime columns
             let df = ctx.vegafusion_table(values_table).await?;

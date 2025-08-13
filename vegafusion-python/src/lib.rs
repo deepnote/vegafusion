@@ -65,9 +65,7 @@ struct PythonPlanExecutor {
 
 impl PythonPlanExecutor {
     fn new(python_executor: PyObject) -> Self {
-        Self {
-            python_executor,
-        }
+        Self { python_executor }
     }
 }
 
@@ -266,8 +264,14 @@ impl PyVegaFusionRuntime {
                             // Handle PyArrow Schema as VegaFusionDataset::Plan
                             let schema = pyschema.into_inner();
                             // TODO: inline this method instead of having it on runtime
-                            self.runtime.create_dataset_from_schema(&name.to_string(), schema)
-                                .map_err(|e| PyValueError::new_err(format!("Failed to create dataset from schema: {}", e)))?
+                            self.runtime
+                                .create_dataset_from_schema(&name.to_string(), schema)
+                                .map_err(|e| {
+                                    PyValueError::new_err(format!(
+                                        "Failed to create dataset from schema: {}",
+                                        e
+                                    ))
+                                })?
                         } else {
                             // Assume PyArrow Table
                             // We convert to ipc bytes for two reasons:

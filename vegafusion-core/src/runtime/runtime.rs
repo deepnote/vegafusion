@@ -1,7 +1,7 @@
 use std::{any::Any, collections::HashMap, sync::Arc};
 
 use crate::proto::gen::pretransform::pre_transform_values_warning::WarningType as ValuesWarningType;
-use crate::runtime::{PlanExecutor, NoOpPlanExecutor};
+use crate::runtime::{NoOpPlanExecutor, PlanExecutor};
 use crate::task_graph::task_value::MaterializedTaskValue;
 use crate::{
     data::dataset::VegaFusionDataset,
@@ -58,7 +58,7 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
     ) -> Result<Vec<ExportUpdateArrow>> {
         let noop_executor = NoOpPlanExecutor::default();
         let executor = plan_executor.unwrap_or(&noop_executor);
-        
+
         let mut result = Vec::new();
         for export_update in export_updates {
             let materialized_value = export_update.value.to_materialized(executor).await?;

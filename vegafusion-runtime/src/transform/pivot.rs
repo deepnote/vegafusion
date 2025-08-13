@@ -109,7 +109,11 @@ impl TransformTrait for Pivot {
     }
 }
 
-async fn extract_sorted_pivot_values(tx: &Pivot, dataframe: DataFrame, config: &CompilationConfig) -> Result<Vec<String>> {
+async fn extract_sorted_pivot_values(
+    tx: &Pivot,
+    dataframe: DataFrame,
+    config: &CompilationConfig,
+) -> Result<Vec<String>> {
     let agg_query = dataframe.aggregate_mixed(vec![unescaped_col(&tx.field)], vec![])?;
 
     let limit = match tx.limit {
@@ -138,7 +142,11 @@ async fn extract_sorted_pivot_values(tx: &Pivot, dataframe: DataFrame, config: &
     Ok(pivot_vec)
 }
 
-async fn pivot_case(tx: &Pivot, dataframe: DataFrame, config: &CompilationConfig) -> Result<(DataFrame, Vec<TaskValue>)> {
+async fn pivot_case(
+    tx: &Pivot,
+    dataframe: DataFrame,
+    config: &CompilationConfig,
+) -> Result<(DataFrame, Vec<TaskValue>)> {
     let pivot_vec = extract_sorted_pivot_values(tx, dataframe.clone(), config).await?;
 
     if pivot_vec.is_empty() {

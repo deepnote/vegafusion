@@ -39,8 +39,6 @@ impl SessionContextUtils for SessionContext {
     }
 }
 
-
-
 #[async_trait]
 pub trait DataFrameUtils {
     async fn collect_to_table(self) -> vegafusion_common::error::Result<VegaFusionTable>;

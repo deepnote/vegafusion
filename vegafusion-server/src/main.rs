@@ -65,15 +65,15 @@ impl VegaFusionRuntimeGrpc {
                             .map(|named_value| {
                                 let executor = self.runtime.default_executor.clone();
                                 async move {
-                                    let materialized_value = named_value
-                                        .value
-                                        .to_materialized(&executor)
-                                        .await?;
+                                    let materialized_value =
+                                        named_value.value.to_materialized(&executor).await?;
                                     Ok::<_, VegaFusionError>(
                                         vegafusion_core::proto::gen::tasks::ResponseTaskValue {
                                             variable: Some(named_value.variable),
                                             scope: named_value.scope,
-                                            value: Some(ProtoTaskValue::try_from(&materialized_value)?),
+                                            value: Some(ProtoTaskValue::try_from(
+                                                &materialized_value,
+                                            )?),
                                         },
                                     )
                                 }
