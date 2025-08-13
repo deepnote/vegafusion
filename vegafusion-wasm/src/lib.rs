@@ -457,6 +457,7 @@ pub async fn vegafusion_embed(
             tz_config,
             row_limit: None,
         },
+        None,
     )
     .await
     .map_err(|e| JsError::new(&e.to_string()))?;

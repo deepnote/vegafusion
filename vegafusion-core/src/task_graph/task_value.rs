@@ -1,6 +1,7 @@
 use crate::proto::gen::tasks::task_value::Data;
 use crate::proto::gen::tasks::ResponseTaskValue;
 use crate::proto::gen::tasks::{TaskGraphValueResponse, TaskValue as ProtoTaskValue, Variable};
+use crate::runtime::PlanExecutor;
 use crate::task_graph::memory::{inner_size_of_scalar, inner_size_of_table};
 use datafusion_common::ScalarValue;
 use serde_json::Value;
@@ -60,6 +61,20 @@ impl TaskValue {
         };
 
         std::mem::size_of::<Self>() + inner_size
+    }
+
+    pub async fn to_materialized(
+        self,
+        plan_executor: &dyn PlanExecutor,
+    ) -> Result<MaterializedTaskValue> {
+        match self {
+            TaskValue::Plan(plan) => {
+                let table = plan_executor.execute_plan(plan).await?;
+                Ok(MaterializedTaskValue::Table(table))
+            }
+            TaskValue::Scalar(scalar) => Ok(MaterializedTaskValue::Scalar(scalar)),
+            TaskValue::Table(table) => Ok(MaterializedTaskValue::Table(table)),
+        }
     }
 }
 

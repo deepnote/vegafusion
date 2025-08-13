@@ -38,6 +38,7 @@ mod tests {
                 },
                 row_limit: None,
             },
+            None,
         )
         .await
         .unwrap();

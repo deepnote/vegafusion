@@ -12,7 +12,7 @@ use vegafusion_common::data::table::VegaFusionTable;
 use vegafusion_common::data::ORDER_COL;
 use vegafusion_common::error::ResultWithContext;
 use vegafusion_core::data::dataset::VegaFusionDataset;
-use vegafusion_core::task_graph::task_value::{MaterializedTaskValue, TaskValue};
+use vegafusion_core::task_graph::task_value::TaskValue;
 
 #[async_trait]
 pub trait SessionContextUtils {
@@ -39,31 +39,7 @@ impl SessionContextUtils for SessionContext {
     }
 }
 
-#[async_trait]
-pub trait TaskValueUtils {
-    async fn to_materialized(
-        self,
-        ctx: &SessionContext,
-    ) -> vegafusion_common::error::Result<MaterializedTaskValue>;
-}
 
-#[async_trait]
-impl TaskValueUtils for TaskValue {
-    async fn to_materialized(
-        self,
-        ctx: &SessionContext,
-    ) -> vegafusion_common::error::Result<MaterializedTaskValue> {
-        match self {
-            TaskValue::Plan(plan) => {
-                let df = DataFrame::new(ctx.state(), plan);
-                let table = df.collect_to_table().await?;
-                Ok(MaterializedTaskValue::Table(table))
-            }
-            TaskValue::Scalar(scalar) => Ok(MaterializedTaskValue::Scalar(scalar)),
-            TaskValue::Table(table) => Ok(MaterializedTaskValue::Table(table)),
-        }
-    }
-}
 
 #[async_trait]
 pub trait DataFrameUtils {

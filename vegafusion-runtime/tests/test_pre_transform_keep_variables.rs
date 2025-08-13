@@ -39,6 +39,7 @@ mod tests {
                     default_input_tz: None,
                     preserve_interactivity: true,
                 },
+                None,
             )
             .await
             .unwrap();
@@ -66,6 +67,7 @@ mod tests {
                     default_input_tz: None,
                     preserve_interactivity: true,
                 },
+                None,
             )
             .await
             .unwrap();
@@ -94,6 +96,7 @@ mod tests {
                     default_input_tz: None,
                     preserve_interactivity: true,
                 },
+                None,
             )
             .await;
 

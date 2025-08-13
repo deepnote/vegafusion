@@ -35,13 +35,14 @@ use vegafusion_core::task_graph::graph::ScopedVariable;
 use vegafusion_core::task_graph::task_value::TaskValue;
 use vegafusion_runtime::tokio_runtime::TOKIO_THREAD_STACK_SIZE;
 
-use vegafusion_core::runtime::VegaFusionRuntimeTrait;
+use vegafusion_core::runtime::{PlanExecutor, VegaFusionRuntimeTrait};
 use vegafusion_runtime::task_graph::cache::VegaFusionCache;
 
+use async_trait::async_trait;
 use pyo3::types::PyString;
 use pyo3_arrow::PySchema;
-use vegafusion_common::arrow::datatypes::SchemaRef;
 use vegafusion_common::data::scalar::ScalarValueHelpers;
+use vegafusion_common::datafusion_expr::LogicalPlan;
 
 static INIT: Once = Once::new();
 
@@ -56,6 +57,93 @@ pub fn initialize_logging() {
 
 lazy_static! {
     static ref SYSTEM_INSTANCE: sysinfo::System = sysinfo::System::new_all();
+}
+
+struct PythonPlanExecutor {
+    python_executor: PyObject,
+}
+
+impl PythonPlanExecutor {
+    fn new(python_executor: PyObject) -> Self {
+        Self {
+            python_executor,
+        }
+    }
+}
+
+#[async_trait]
+impl PlanExecutor for PythonPlanExecutor {
+    async fn execute_plan(
+        &self,
+        plan: LogicalPlan,
+    ) -> vegafusion_common::error::Result<VegaFusionTable> {
+        let plan_str = format!("{}", plan.display_pg_json());
+
+        let python_executor = &self.python_executor;
+        let result = tokio::task::spawn_blocking({
+            let python_executor = Python::with_gil(|py| python_executor.clone_ref(py));
+            let plan_str = plan_str.clone();
+
+            move || {
+                Python::with_gil(|py| -> PyResult<VegaFusionTable> {
+                    let plan_py = PyString::new(py, &plan_str);
+
+                    let table_result = if python_executor.bind(py).is_callable() {
+                        python_executor.call1(py, (plan_py,))
+                    } else if python_executor.bind(py).hasattr("execute_plan")? {
+                        let execute_plan_method =
+                            python_executor.bind(py).getattr("execute_plan")?;
+                        execute_plan_method
+                            .call1((plan_py,))
+                            .map(|result| result.into())
+                    } else {
+                        return Err(PyValueError::new_err(
+                            "Executor must be callable or have an execute_plan method",
+                        ));
+                    }?;
+
+                    VegaFusionTable::from_pyarrow(py, &table_result.bind(py))
+                })
+            }
+        })
+        .await;
+
+        match result {
+            Ok(Ok(table)) => Ok(table),
+            Ok(Err(py_err)) => Err(vegafusion_common::error::VegaFusionError::internal(
+                format!("Python executor error: {}", py_err),
+            )),
+            Err(join_err) => Err(vegafusion_common::error::VegaFusionError::internal(
+                format!("Failed to execute Python executor: {}", join_err),
+            )),
+        }
+    }
+}
+
+/// Helper function to convert a Python object to a PlanExecutor
+/// Accepts either:
+/// - A callable that takes a logical plan string and returns an Arrow table
+/// - An object with execute_plan method that has the same signature
+fn python_object_to_executor(
+    python_obj: Option<PyObject>,
+) -> PyResult<Option<Box<dyn PlanExecutor>>> {
+    match python_obj {
+        Some(obj) => {
+            Python::with_gil(|py| -> PyResult<Option<Box<dyn PlanExecutor>>> {
+                let obj_ref = obj.bind(py);
+
+                // Validate that the object is either callable or has execute_plan method
+                if obj_ref.is_callable() || obj_ref.hasattr("execute_plan")? {
+                    Ok(Some(Box::new(PythonPlanExecutor::new(obj))))
+                } else {
+                    Err(PyValueError::new_err(
+                        "Executor must be callable or have an execute_plan method",
+                    ))
+                }
+            })
+        }
+        None => Ok(None),
+    }
 }
 
 #[pyclass]
@@ -73,6 +161,7 @@ impl PyChartState {
         inline_datasets: HashMap<String, VegaFusionDataset>,
         tz_config: TzConfig,
         row_limit: Option<u32>,
+        executor: Option<&dyn PlanExecutor>,
     ) -> PyResult<Self> {
         let state = tokio_runtime.block_on(RsChartState::try_new(
             runtime.as_ref(),
@@ -82,6 +171,7 @@ impl PyChartState {
                 tz_config,
                 row_limit,
             },
+            executor,
         ))?;
         Ok(Self {
             runtime,
@@ -172,6 +262,12 @@ impl PyVegaFusionRuntime {
                             let (table, hash) =
                                 VegaFusionTable::from_pyarrow_with_hash(py, &inline_dataset)?;
                             VegaFusionDataset::from_table(table, Some(hash))?
+                        } else if let Ok(pyschema) = inline_dataset.extract::<PySchema>() {
+                            // Handle PyArrow Schema as VegaFusionDataset::Plan
+                            let schema = pyschema.into_inner();
+                            // TODO: inline this method instead of having it on runtime
+                            self.runtime.create_dataset_from_schema(&name.to_string(), schema)
+                                .map_err(|e| PyValueError::new_err(format!("Failed to create dataset from schema: {}", e)))?
                         } else {
                             // Assume PyArrow Table
                             // We convert to ipc bytes for two reasons:
@@ -250,7 +346,7 @@ impl PyVegaFusionRuntime {
         })
     }
 
-    #[pyo3(signature = (spec, local_tz, default_input_tz=None, row_limit=None, inline_datasets=None))]
+    #[pyo3(signature = (spec, local_tz, default_input_tz=None, row_limit=None, inline_datasets=None, executor=None))]
     pub fn new_chart_state(
         &self,
         py: Python,
@@ -259,6 +355,7 @@ impl PyVegaFusionRuntime {
         default_input_tz: Option<String>,
         row_limit: Option<u32>,
         inline_datasets: Option<&Bound<PyDict>>,
+        executor: Option<PyObject>,
     ) -> PyResult<PyChartState> {
         let spec = parse_json_spec(spec)?;
         let tz_config = TzConfig {
@@ -267,6 +364,8 @@ impl PyVegaFusionRuntime {
         };
 
         let inline_datasets = self.process_inline_datasets(inline_datasets)?;
+        let rust_executor = python_object_to_executor(executor)?;
+        let executor_ref = rust_executor.as_deref();
 
         py.allow_threads(|| {
             PyChartState::try_new(
@@ -276,12 +375,13 @@ impl PyVegaFusionRuntime {
                 inline_datasets,
                 tz_config,
                 row_limit,
+                executor_ref,
             )
         })
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (spec, local_tz, default_input_tz=None, row_limit=None, preserve_interactivity=None, inline_datasets=None, keep_signals=None, keep_datasets=None))]
+    #[pyo3(signature = (spec, local_tz, default_input_tz=None, row_limit=None, preserve_interactivity=None, inline_datasets=None, keep_signals=None, keep_datasets=None, executor=None))]
     pub fn pre_transform_spec(
         &self,
         py: Python,
@@ -293,6 +393,7 @@ impl PyVegaFusionRuntime {
         inline_datasets: Option<&Bound<PyDict>>,
         keep_signals: Option<Vec<(String, Vec<u32>)>>,
         keep_datasets: Option<Vec<(String, Vec<u32>)>>,
+        executor: Option<PyObject>,
     ) -> PyResult<(PyObject, PyObject)> {
         let inline_datasets = self.process_inline_datasets(inline_datasets)?;
 
@@ -307,6 +408,9 @@ impl PyVegaFusionRuntime {
         for (name, scope) in keep_datasets.unwrap_or_default() {
             keep_variables.push((Variable::new_data(&name), scope))
         }
+
+        let rust_executor = python_object_to_executor(executor)?;
+        let executor_ref = rust_executor.as_deref();
 
         let (spec, warnings) = py.allow_threads(|| {
             self.tokio_runtime.block_on(
@@ -326,6 +430,7 @@ impl PyVegaFusionRuntime {
                             })
                             .collect(),
                     },
+                    executor_ref,
                 ),
             )
         })?;
@@ -414,7 +519,7 @@ impl PyVegaFusionRuntime {
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (spec, local_tz, default_input_tz=None, preserve_interactivity=None, extract_threshold=None, extracted_format=None, inline_datasets=None, keep_signals=None, keep_datasets=None))]
+    #[pyo3(signature = (spec, local_tz, default_input_tz=None, preserve_interactivity=None, extract_threshold=None, extracted_format=None, inline_datasets=None, keep_signals=None, keep_datasets=None, executor=None))]
     pub fn pre_transform_extract(
         &self,
         py: Python,
@@ -427,6 +532,7 @@ impl PyVegaFusionRuntime {
         inline_datasets: Option<&Bound<PyDict>>,
         keep_signals: Option<Vec<(String, Vec<u32>)>>,
         keep_datasets: Option<Vec<(String, Vec<u32>)>>,
+        executor: Option<PyObject>,
     ) -> PyResult<(PyObject, Vec<PyObject>, PyObject)> {
         let inline_datasets = self.process_inline_datasets(inline_datasets)?;
         let spec = parse_json_spec(spec)?;
@@ -449,6 +555,9 @@ impl PyVegaFusionRuntime {
             });
         }
 
+        let rust_executor = python_object_to_executor(executor)?;
+        let executor_ref = rust_executor.as_deref();
+
         let (tx_spec, datasets, warnings) = py.allow_threads(|| {
             self.tokio_runtime
                 .block_on(self.runtime.pre_transform_extract(
@@ -461,6 +570,7 @@ impl PyVegaFusionRuntime {
                         extract_threshold: extract_threshold as i32,
                         keep_variables,
                     },
+                    executor_ref,
                 ))
         })?;
 
@@ -513,30 +623,22 @@ impl PyVegaFusionRuntime {
 
     #[cfg(feature = "logical-plan")]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (spec, inline_dataset_schemas, local_tz, default_input_tz=None, preserve_interactivity=None, keep_signals=None, keep_datasets=None))]
+    #[pyo3(signature = (spec, local_tz, default_input_tz=None, preserve_interactivity=None, inline_datasets=None, keep_signals=None, keep_datasets=None))]
     pub fn pre_transform_logical_plan(
         &self,
         py: Python,
         spec: PyObject,
-        inline_dataset_schemas: Option<&Bound<PyDict>>,
         local_tz: String,
         default_input_tz: Option<String>,
         preserve_interactivity: Option<bool>,
+        inline_datasets: Option<&Bound<PyDict>>,
         keep_signals: Option<Vec<(String, Vec<u32>)>>,
         keep_datasets: Option<Vec<(String, Vec<u32>)>>,
     ) -> PyResult<(PyObject, PyObject, PyObject)> {
         let spec = parse_json_spec(spec)?;
         let preserve_interactivity = preserve_interactivity.unwrap_or(true);
 
-        let mut schemas: HashMap<String, SchemaRef> = HashMap::new();
-        if let Some(schemas_dict) = inline_dataset_schemas {
-            for (name, schema_obj) in schemas_dict.iter() {
-                let name = name.to_string();
-                let pyschema = schema_obj.extract::<PySchema>()?;
-                let schema = pyschema.into_inner();
-                schemas.insert(name, schema);
-            }
-        }
+        let inline_datasets = self.process_inline_datasets(inline_datasets)?;
 
         let mut keep_variables: Vec<PreTransformVariable> = Vec::new();
         for (name, scope) in keep_signals.unwrap_or_default() {
@@ -558,7 +660,7 @@ impl PyVegaFusionRuntime {
             self.tokio_runtime
                 .block_on(self.runtime.pre_transform_logical_plan(
                     &spec,
-                    schemas,
+                    inline_datasets,
                     &PreTransformLogicalPlanOpts {
                         local_tz,
                         default_input_tz,

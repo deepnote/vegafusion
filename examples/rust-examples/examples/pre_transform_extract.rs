@@ -19,6 +19,7 @@ async fn main() {
                 extract_threshold: 4,
                 ..Default::default()
             },
+            None,
         )
         .await
         .unwrap();

@@ -37,6 +37,7 @@ async fn main() {
             &spec,
             &inline_datasets,    // Inline datasets
             &Default::default(), // Options
+            None,                // Plan executor
         )
         .await
         .unwrap();
