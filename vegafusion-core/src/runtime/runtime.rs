@@ -1,6 +1,7 @@
 use std::{any::Any, collections::HashMap, sync::Arc};
 
 use crate::proto::gen::pretransform::pre_transform_values_warning::WarningType as ValuesWarningType;
+use crate::runtime::{NoOpPlanExecutor, PlanExecutor};
 use crate::task_graph::task_value::MaterializedTaskValue;
 use crate::{
     data::dataset::VegaFusionDataset,
@@ -53,10 +54,14 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
     async fn materialize_export_updates(
         &self,
         export_updates: Vec<ExportUpdate>,
+        plan_executor: Option<&dyn PlanExecutor>,
     ) -> Result<Vec<ExportUpdateArrow>> {
+        let noop_executor = NoOpPlanExecutor::default();
+        let executor = plan_executor.unwrap_or(&noop_executor);
+
         let mut result = Vec::new();
         for export_update in export_updates {
-            let materialized_value = export_update.value.as_materialized()?;
+            let materialized_value = export_update.value.to_materialized(executor).await?;
             result.push(ExportUpdateArrow {
                 namespace: export_update.namespace,
                 name: export_update.name,
@@ -132,6 +137,7 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
         spec: &ChartSpec,
         inline_datasets: &HashMap<String, VegaFusionDataset>,
         options: &PreTransformSpecOpts,
+        plan_executor: Option<&dyn PlanExecutor>,
     ) -> Result<(ChartSpec, Vec<PreTransformSpecWarning>)> {
         let input_spec = spec;
 
@@ -152,7 +158,7 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
             )
             .await?;
 
-        let init_arrow = self.materialize_export_updates(init).await?;
+        let init_arrow = self.materialize_export_updates(init, plan_executor).await?;
 
         apply_pre_transform_datasets(input_spec, &plan, init_arrow, options.row_limit)
     }
@@ -162,6 +168,7 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
         spec: &ChartSpec,
         inline_datasets: &HashMap<String, VegaFusionDataset>,
         options: &PreTransformExtractOpts,
+        plan_executor: Option<&dyn PlanExecutor>,
     ) -> Result<(
         ChartSpec,
         Vec<PreTransformExtractTable>,
@@ -185,7 +192,7 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
                 keep_variables,
             )
             .await?;
-        let init_arrow = self.materialize_export_updates(init).await?;
+        let init_arrow = self.materialize_export_updates(init, plan_executor).await?;
 
         // Update client spec with server values
         let mut spec = plan.client_spec.clone();
@@ -409,20 +416,13 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
     async fn pre_transform_logical_plan(
         &self,
         spec: &ChartSpec,
-        inline_dataset_schemas: HashMap<String, SchemaRef>,
+        inline_datasets: HashMap<String, VegaFusionDataset>,
         options: &PreTransformLogicalPlanOpts,
     ) -> Result<(
         ChartSpec,
         Vec<ExportUpdate>,
         Vec<PreTransformLogicalPlanWarning>,
     )> {
-        let inline_datasets: HashMap<String, VegaFusionDataset> = inline_dataset_schemas
-            .into_iter()
-            .map(|(name, schema)| {
-                self.create_dataset_from_schema(&name, schema)
-                    .map(|dataset| (name, dataset))
-            })
-            .collect::<Result<HashMap<_, _>>>()?;
         let keep_variables: Vec<ScopedVariable> = options
             .keep_variables
             .clone()

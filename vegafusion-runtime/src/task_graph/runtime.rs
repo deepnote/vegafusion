@@ -1,5 +1,5 @@
-use crate::data::util::TaskValueUtils;
 use crate::datafusion::context::make_datafusion_context;
+use crate::plan_executor::DataFusionPlanExecutor;
 use crate::task_graph::cache::VegaFusionCache;
 use crate::task_graph::task::TaskCall;
 use crate::task_graph::timezone::RuntimeTzConfig;
@@ -23,6 +23,7 @@ use vegafusion_core::proto::gen::tasks::inline_dataset::Dataset;
 use vegafusion_core::proto::gen::tasks::{
     task::TaskKind, InlineDataset, InlineDatasetTable, NodeValueIndex, TaskGraph,
 };
+use vegafusion_core::runtime::PlanExecutor;
 use vegafusion_core::runtime::VegaFusionRuntimeTrait;
 use vegafusion_core::task_graph::task_value::{NamedTaskValue, TaskValue};
 
@@ -38,13 +39,16 @@ type CacheValue = (TaskValue, Vec<TaskValue>);
 pub struct VegaFusionRuntime {
     pub cache: VegaFusionCache,
     pub ctx: Arc<SessionContext>,
+    pub default_executor: DataFusionPlanExecutor,
 }
 
 impl VegaFusionRuntime {
     pub fn new(cache: Option<VegaFusionCache>) -> Self {
+        let ctx = Arc::new(make_datafusion_context());
         Self {
             cache: cache.unwrap_or_else(|| VegaFusionCache::new(Some(32), None)),
-            ctx: Arc::new(make_datafusion_context()),
+            default_executor: DataFusionPlanExecutor::new(ctx.clone()),
+            ctx,
         }
     }
 
@@ -141,14 +145,14 @@ impl VegaFusionRuntimeTrait for VegaFusionRuntime {
     async fn materialize_export_updates(
         &self,
         export_updates: Vec<ExportUpdate>,
+        plan_executor: Option<&dyn PlanExecutor>,
     ) -> Result<Vec<ExportUpdateArrow>> {
+        let executor = plan_executor.unwrap_or(&self.default_executor);
+
         let materialization_futures: Vec<_> = export_updates
             .into_iter()
             .map(|export_update| async move {
-                let materialized_value = export_update
-                    .value
-                    .to_materialized(self.ctx.as_ref())
-                    .await?;
+                let materialized_value = export_update.value.to_materialized(executor).await?;
                 Ok::<_, VegaFusionError>(ExportUpdateArrow {
                     namespace: export_update.namespace,
                     name: export_update.name,

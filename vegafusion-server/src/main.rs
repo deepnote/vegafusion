@@ -26,7 +26,6 @@ use vegafusion_core::proto::gen::pretransform::{
     PreTransformSpecOpts, PreTransformSpecRequest, PreTransformSpecResponse,
     PreTransformValuesOpts, PreTransformValuesRequest, PreTransformValuesResponse,
 };
-use vegafusion_runtime::data::util::TaskValueUtils;
 use vegafusion_runtime::task_graph::cache::VegaFusionCache;
 use vegafusion_runtime::tokio_runtime::TOKIO_THREAD_STACK_SIZE;
 
@@ -63,18 +62,21 @@ impl VegaFusionRuntimeGrpc {
                         // Materialize all TaskValues before converting to protobuf
                         let materialized_futures: Vec<_> = response_values
                             .into_iter()
-                            .map(|named_value| async move {
-                                let materialized_value = named_value
-                                    .value
-                                    .to_materialized(self.runtime.ctx.as_ref())
-                                    .await?;
-                                Ok::<_, VegaFusionError>(
-                                    vegafusion_core::proto::gen::tasks::ResponseTaskValue {
-                                        variable: Some(named_value.variable),
-                                        scope: named_value.scope,
-                                        value: Some(ProtoTaskValue::try_from(&materialized_value)?),
-                                    },
-                                )
+                            .map(|named_value| {
+                                let executor = self.runtime.default_executor.clone();
+                                async move {
+                                    let materialized_value =
+                                        named_value.value.to_materialized(&executor).await?;
+                                    Ok::<_, VegaFusionError>(
+                                        vegafusion_core::proto::gen::tasks::ResponseTaskValue {
+                                            variable: Some(named_value.variable),
+                                            scope: named_value.scope,
+                                            value: Some(ProtoTaskValue::try_from(
+                                                &materialized_value,
+                                            )?),
+                                        },
+                                    )
+                                }
                             })
                             .collect();
 
@@ -131,7 +133,7 @@ impl VegaFusionRuntimeGrpc {
         // Apply pre-transform spec
         let (transformed_spec, warnings) = self
             .runtime
-            .pre_transform_spec(&spec, &inline_datasets, &opts)
+            .pre_transform_spec(&spec, &inline_datasets, &opts, None)
             .await?;
 
         // Build result
@@ -163,7 +165,7 @@ impl VegaFusionRuntimeGrpc {
         let spec: ChartSpec = serde_json::from_str(&spec_string)?;
         let (spec, datasets, warnings) = self
             .runtime
-            .pre_transform_extract(&spec, &inline_datasets, &opts)
+            .pre_transform_extract(&spec, &inline_datasets, &opts, None)
             .await?;
 
         // Build Response

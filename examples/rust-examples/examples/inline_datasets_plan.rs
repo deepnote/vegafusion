@@ -50,6 +50,7 @@ async fn main() -> vegafusion_common::error::Result<()> {
             &spec,
             &inline_datasets,    // Inline datasets
             &Default::default(), // Options
+            None,                // Plan executor
         )
         .await
         .unwrap();

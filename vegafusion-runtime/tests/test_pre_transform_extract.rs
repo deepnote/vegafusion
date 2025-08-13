@@ -39,6 +39,7 @@ mod tests {
                     local_tz: "UTC".to_string(),
                     default_input_tz: None,
                 },
+                None,
             )
             .await
             .unwrap();

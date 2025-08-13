@@ -15,7 +15,6 @@ use tokio::runtime::Runtime;
 use vegafusion_common::data::scalar::ScalarValueHelpers;
 use vegafusion_common::data::table::VegaFusionTable;
 use vegafusion_core::runtime::VegaFusionRuntimeTrait;
-use vegafusion_runtime::data::util::TaskValueUtils;
 
 use vegafusion_core::planning::plan::{PlannerConfig, SpecPlan};
 
@@ -1211,7 +1210,7 @@ mod test_pre_transform_inline {
         };
 
         let response = runtime
-            .pre_transform_spec(&inline_spec, &inline_datasets, &opts)
+            .pre_transform_spec(&inline_spec, &inline_datasets, &opts, None)
             .await
             .unwrap();
 
@@ -1352,7 +1351,7 @@ async fn check_pre_transform_spec_from_files(spec_name: &str, tolerance: f64) {
     };
 
     let (pre_transform_spec, _warnings) = runtime
-        .pre_transform_spec(&full_spec, &Default::default(), &opts)
+        .pre_transform_spec(&full_spec, &Default::default(), &opts, None)
         .await
         .unwrap();
 
@@ -1471,7 +1470,10 @@ async fn check_spec_sequence(
             .await
             .expect("Failed to get node value");
 
-        let materialized_value = value.to_materialized(&runtime.ctx).await.unwrap();
+        let materialized_value = value
+            .to_materialized(&runtime.default_executor)
+            .await
+            .unwrap();
         init.push(ExportUpdateJSON {
             namespace: ExportUpdateNamespace::try_from(var.0.namespace()).unwrap(),
             name: var.0.name.clone(),

@@ -10,7 +10,7 @@ use crate::{
         pretransform::PreTransformSpecWarning,
         tasks::{NodeValueIndex, TaskGraph, TzConfig, Variable, VariableNamespace},
     },
-    runtime::VegaFusionRuntimeTrait,
+    runtime::{PlanExecutor, VegaFusionRuntimeTrait},
     spec::chart::ChartSpec,
     task_graph::{graph::ScopedVariable, task_value::TaskValue},
 };
@@ -60,6 +60,7 @@ impl ChartState {
         spec: ChartSpec,
         inline_datasets: HashMap<String, VegaFusionDataset>,
         opts: ChartStateOpts,
+        plan_executor: Option<&dyn PlanExecutor>,
     ) -> Result<Self> {
         let dataset_fingerprints = inline_datasets
             .iter()
@@ -112,7 +113,9 @@ impl ChartState {
             });
         }
 
-        let init_arrow = runtime.materialize_export_updates(init).await?;
+        let init_arrow = runtime
+            .materialize_export_updates(init, plan_executor)
+            .await?;
 
         let (transformed_spec, warnings) =
             apply_pre_transform_datasets(&spec, &plan, init_arrow, opts.row_limit)?;

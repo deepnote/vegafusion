@@ -100,6 +100,7 @@ mod test_stringify_datetimes {
                     row_limit: None,
                     preserve_interactivity: true,
                 },
+                None,
             )
             .await
             .unwrap();
@@ -155,6 +156,7 @@ mod test_stringify_datetimes {
                     row_limit: None,
                     preserve_interactivity: true,
                 },
+                None,
             )
             .await
             .unwrap();
@@ -238,6 +240,7 @@ mod test_stringify_datetimes {
                     row_limit: None,
                     preserve_interactivity: true,
                 },
+                None,
             )
             .await
             .unwrap();
@@ -303,6 +306,7 @@ mod test_stringify_datetimes {
                     row_limit: None,
                     preserve_interactivity: true,
                 },
+                None,
             ))
             .unwrap();
 
@@ -348,6 +352,7 @@ mod test_stringify_datetimes {
                     row_limit: None,
                     preserve_interactivity: true,
                 },
+                None,
             )
             .await
             .unwrap();
