@@ -1,8 +1,8 @@
 use crate::expression::compiler::compile;
 use crate::expression::compiler::config::CompilationConfig;
 use crate::expression::compiler::utils::ExprHelpers;
-use crate::plan_executor::DataFusionPlanExecutor;
 use crate::task_graph::task::TaskCall;
+use vegafusion_core::runtime::PlanExecutor;
 use std::borrow::Cow;
 
 use async_trait::async_trait;
@@ -63,7 +63,7 @@ pub fn build_compilation_config(
     input_vars: &[InputVariable],
     values: &[TaskValue],
     tz_config: &Option<RuntimeTzConfig>,
-    ctx: Arc<SessionContext>,
+    plan_executor: Arc<dyn PlanExecutor>,
 ) -> CompilationConfig {
     // Build compilation config from input_vals
     let mut signal_scope: HashMap<String, ScalarValue> = HashMap::new();
@@ -89,8 +89,6 @@ pub fn build_compilation_config(
         }
     }
 
-    let plan_executor = Arc::new(DataFusionPlanExecutor::new(ctx));
-
     // CompilationConfig is not Send, so use local scope here to make sure it's dropped
     // before the call to await below.
     CompilationConfig {
@@ -110,9 +108,10 @@ impl TaskCall for DataUrlTask {
         tz_config: &Option<RuntimeTzConfig>,
         inline_datasets: HashMap<String, VegaFusionDataset>,
         ctx: Arc<SessionContext>,
+        plan_executor: Arc<dyn PlanExecutor>,
     ) -> Result<(TaskValue, Vec<TaskValue>)> {
         // Build compilation config for url signal (if any) and transforms (if any)
-        let config = build_compilation_config(&self.input_vars(), values, tz_config, ctx.clone());
+        let config = build_compilation_config(&self.input_vars(), values, tz_config, plan_executor.clone());
 
         // Build url string
         let url = match self.url.as_ref().unwrap() {
@@ -500,6 +499,7 @@ impl TaskCall for DataValuesTask {
         tz_config: &Option<RuntimeTzConfig>,
         _inline_datasets: HashMap<String, VegaFusionDataset>,
         ctx: Arc<SessionContext>,
+        plan_executor: Arc<dyn PlanExecutor>,
     ) -> Result<(TaskValue, Vec<TaskValue>)> {
         // Deserialize data into table
         let values_table = VegaFusionTable::from_ipc_bytes(&self.values)?;
@@ -535,7 +535,7 @@ impl TaskCall for DataValuesTask {
             let pipeline = self.pipeline.as_ref().unwrap();
 
             let config =
-                build_compilation_config(&self.input_vars(), values, tz_config, ctx.clone());
+                build_compilation_config(&self.input_vars(), values, tz_config, plan_executor.clone());
 
             // Process datetime columns
             let df = ctx.vegafusion_table(values_table).await?;
@@ -568,9 +568,10 @@ impl TaskCall for DataSourceTask {
         tz_config: &Option<RuntimeTzConfig>,
         _inline_datasets: HashMap<String, VegaFusionDataset>,
         ctx: Arc<SessionContext>,
+        plan_executor: Arc<dyn PlanExecutor>,
     ) -> Result<(TaskValue, Vec<TaskValue>)> {
         let input_vars = self.input_vars();
-        let mut config = build_compilation_config(&input_vars, values, tz_config, ctx.clone());
+        let mut config = build_compilation_config(&input_vars, values, tz_config, plan_executor.clone());
 
         // Remove source dataset from config
         let source_dataset = config.data_scope.remove(&self.source).with_context(|| {

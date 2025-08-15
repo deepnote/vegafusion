@@ -55,7 +55,7 @@ impl VegaFusionRuntimeGrpc {
 
                 match self
                     .runtime
-                    .query_request(task_graph, indices.as_slice(), &inline_datasets)
+                    .query_request(task_graph, indices.as_slice(), &inline_datasets, None)
                     .await
                 {
                     Ok(response_values) => {
@@ -66,7 +66,7 @@ impl VegaFusionRuntimeGrpc {
                                 let executor = self.runtime.default_executor.clone();
                                 async move {
                                     let materialized_value =
-                                        named_value.value.to_materialized(&executor).await?;
+                                        named_value.value.to_materialized(executor).await?;
                                     Ok::<_, VegaFusionError>(
                                         vegafusion_core::proto::gen::tasks::ResponseTaskValue {
                                             variable: Some(named_value.variable),
@@ -224,7 +224,7 @@ impl VegaFusionRuntimeGrpc {
 
         let (values, warnings) = self
             .runtime
-            .pre_transform_values(&spec, &variables, &inline_datasets, &opts)
+            .pre_transform_values(&spec, &variables, &inline_datasets, &opts, None)
             .await?;
 
         let response_values: Vec<_> = values

@@ -1,6 +1,7 @@
 use datafusion::datasource::{provider_as_source, MemTable};
 use datafusion::prelude::{DataFrame, SessionContext};
 use datafusion_expr::{col, lit, LogicalPlanBuilder};
+use datafusion_expr::Expr;
 use datafusion_functions::expr_fn::{to_char, to_timestamp_seconds};
 use std::sync::Arc;
 use vegafusion_common::arrow::array::RecordBatch;
@@ -250,6 +251,82 @@ async fn test_logical_plan_to_spark_sql_rewrites_intervals(
     assert_eq!(
         spark_sql, expected_sql,
         "Generated SQL should expand interval abbreviations to full names"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_logical_plan_to_spark_sql_quotes_column_identifiers(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let schema_fields = vec![
+        Field::new("customer name", DataType::Utf8, false), // space in name
+        Field::new("customer-email", DataType::Utf8, false), // hyphen in name
+        Field::new("select", DataType::Utf8, false), // SQL reserved word
+        Field::new("from", DataType::Utf8, false), // SQL reserved word
+        Field::new("Total Amount", DataType::Float64, false), // space and capital letters
+        Field::new("123field", DataType::Int32, false), // starts with digit
+        Field::new("normal_field", DataType::Int32, false), // normal field (shouldn't be quoted)
+    ];
+
+    let df = create_test_dataframe(schema_fields).await?;
+
+    // Create a nested query structure to test recursive alias quoting
+    // This creates: SELECT ... FROM (SELECT ... AS "nested alias" FROM (SELECT ... FROM test_table))
+    let inner_df = df.select(vec![
+        flat_col("customer name").alias("inner customer name"), // nested alias with space
+        flat_col("select").alias("inner select"), // nested alias with reserved word
+        flat_col("normal_field").alias("inner_normal"), // normal nested alias
+    ])?;
+
+    let middle_df = inner_df.select(vec![
+        flat_col("inner customer name").alias("middle customer name"), // another level of nesting
+        flat_col("inner select").alias("middle from"), // reserved word alias
+        flat_col("inner_normal"), // pass through
+    ])?;
+
+    let result_df = middle_df.select(vec![
+        flat_col("middle customer name").alias("final name"), // final alias with space
+        flat_col("middle from").alias("final location"), // final alias with space
+        flat_col("inner_normal").alias("final_normal"),
+    ])?;
+
+    let plan = result_df.logical_plan().clone();
+    let spark_sql = logical_plan_to_spark_sql(&plan)?;
+
+    // The expected SQL should have quoted aliases at all levels of nesting
+    let expected_sql = "SELECT `middle customer name` AS `final name`, `middle from` AS `final location`, inner_normal AS final_normal FROM (SELECT `inner customer name` AS `middle customer name`, `inner select` AS `middle from`, inner_normal FROM (SELECT test_table.`customer name` AS `inner customer name`, test_table.`select` AS `inner select`, test_table.normal_field AS inner_normal FROM test_table))";
+
+    assert_eq!(
+        spark_sql.trim(),
+        expected_sql,
+        "Generated SQL should properly quote column names and aliases at all nesting levels"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_logical_plan_to_spark_sql_parenthesizes_nested_is_null(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let schema_fields = vec![Field::new("IMDB Rating", DataType::Utf8, false)];
+
+    let df = create_test_dataframe(schema_fields).await?;
+
+    // Build nested IS NULL: (test_table.`IMDB Rating` IS NULL) IS NULL
+    let nested_is_null = Expr::IsNull(Box::new(Expr::IsNull(Box::new(col("IMDB Rating")))));
+    let expr = nested_is_null.alias("check_null");
+
+    let df = df.select(vec![expr])?;
+    let plan = df.logical_plan().clone();
+    let spark_sql = logical_plan_to_spark_sql(&plan)?;
+
+    let expected_sql = "SELECT (test_table.`IMDB Rating` IS NULL) IS NULL AS check_null FROM test_table";
+
+    assert_eq!(
+        spark_sql.trim(),
+        expected_sql,
+        "Generated SQL should parenthesize nested IS NULL for Spark compatibility"
     );
 
     Ok(())

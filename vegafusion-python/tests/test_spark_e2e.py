@@ -6,6 +6,7 @@ import pytest
 import pandas as pd
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, to_utc_timestamp, current_timezone
+from pyspark.sql.pandas.types import to_arrow_schema
 import vl_convert as vlc
 import vegafusion as vf
 import pyarrow as pa
@@ -24,7 +25,6 @@ def _discover_spec_files(limit: Optional[int] = None) -> list[Path]:
     specs_filtered = [p for p in specs_all if not p.name.startswith("_")]
     specs_sorted = sorted(specs_filtered)
     return specs_sorted[:limit] if limit is not None else specs_sorted
-
 
 @pytest.fixture(scope="session")
 def spark():
@@ -83,53 +83,32 @@ def test_spec_against_spark(spec_path: Path, spark: SparkSession):
     vegalite_spec = json.loads(spec_path.read_text("utf8"))
     vega_spec = vlc.vegalite_to_vega(vegalite_spec)
 
-    print("Aggregating data in memory")
-    _, inmemory_datasets, _ = vf.runtime.pre_transform_extract(
-        vega_spec,
-        extract_threshold=0,
-        extracted_format="pyarrow",
+    print("Generating Pandas-based transformed spec")
+    pandas_spec, _ = vf.runtime.pre_transform_spec(
+        spec=vega_spec,
         local_tz="UTC",
         default_input_tz="UTC",
         preserve_interactivity=False,
         inline_datasets={"sales_data_1kk": SALES_DATA_DF},
     )
 
-    print("Converting resulting Arrow tables to Pandas")
-    inmemory_dataframes = {ds[0]: ds[2].to_pandas() for ds in inmemory_datasets}
+    print("Generating Spark-backed results via custom executor")
 
-    print("Generating SparkSQL for aggregation")
-    _, spark_datasets_sql, _ = vf.runtime.pre_transform_logical_plan_vendor(
-        vega_spec,
+    def spark_executor(sql_query: str) -> pa.Table:
+        spark_df = spark.sql(sql_query)
+        return pa.Table.from_pandas(spark_df.toPandas())
+
+    sales_schema = to_arrow_schema(spark.table("sales_data_1kk").schema)
+
+    spark_spec, _ = vf.runtime.pre_transform_spec_vendor(
+        spec=vega_spec,
         output_format="sparksql",
+        executor=spark_executor,
         local_tz="UTC",
         default_input_tz="UTC",
         preserve_interactivity=False,
-        inline_dataset_schemas={"sales_data_1kk": pa.Schema.from_pandas(SALES_DATA_DF)},
+        inline_datasets={"sales_data_1kk": sales_schema},
     )
 
-    print("Executing received SparkSQL")
-    print(spark_datasets_sql)
-    spark_dataframes = {
-        ds["name"]: spark.sql(ds["sparksql"]).toPandas()
-        if "sparksql" in ds
-        else ds["data"].to_pandas()
-        for ds in spark_datasets_sql
-        if ds["namespace"] == "data"
-    }
-
-    print("Inmemory datasets:", set(inmemory_dataframes.keys()))
-    print("Spark datasets:", set(spark_dataframes.keys()))
-    assert set(inmemory_dataframes.keys()) == set(
-        spark_dataframes.keys()
-    ), "Mismatch in returned dataframes"
-
-    for name, expected_df in inmemory_dataframes.items():
-        print("Comparing datasets", name)
-        actual_df = spark_dataframes[name]
-        expected_sorted = expected_df.sort_index(axis=1).reset_index(drop=True)
-        actual_sorted = actual_df.sort_index(axis=1).reset_index(drop=True)
-        pd.testing.assert_frame_equal(
-            expected_sorted,
-            actual_sorted,
-            check_dtype=False,
-        )
+    print("Comparing transformed specs (Pandas vs Spark)")
+    assert pandas_spec == spark_spec

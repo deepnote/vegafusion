@@ -26,7 +26,7 @@ use vegafusion_core::planning::watch::{ExportUpdateJSON, ExportUpdateNamespace, 
 use vegafusion_core::proto::gen::services::{
     query_request, query_result, QueryRequest, QueryResult,
 };
-use vegafusion_core::runtime::VegaFusionRuntimeTrait;
+use vegafusion_core::runtime::{PlanExecutor, VegaFusionRuntimeTrait};
 use vegafusion_core::spec::chart::ChartSpec;
 
 use vegafusion_core::chart_state::{ChartState, ChartStateOpts};
@@ -167,6 +167,7 @@ impl VegaFusionRuntimeTrait for QueryFnVegaFusionRuntime {
         task_graph: Arc<TaskGraph>,
         indices: &[NodeValueIndex],
         inline_datasets: &HashMap<String, VegaFusionDataset>,
+        _plan_executor: Option<Arc<dyn PlanExecutor>>,
     ) -> vegafusion_common::error::Result<Vec<NamedTaskValue>> {
         // Request initial values
         let request_msg = QueryRequest {

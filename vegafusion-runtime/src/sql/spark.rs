@@ -46,6 +46,8 @@ pub fn logical_plan_to_spark_sql(plan: &LogicalPlan) -> Result<String> {
     rewrite_date_format(&mut statement);
     rewrite_timestamps(&mut statement);
     rewrite_intervals(&mut statement);
+    rewrite_nested_is_null(&mut statement);
+    rewrite_column_identifiers(&mut statement);
 
     // println!("===============================");
     // println!("AST after processing");
@@ -199,6 +201,20 @@ fn rewrite_intervals(statement: &mut ast::Statement) {
                         span: value_with_span.span.clone(),
                     });
                 }
+            }
+        }
+        ControlFlow::<()>::Continue(())
+    });
+}
+
+/// Ensure nested IS NULL/IS NOT NULL predicates are parenthesized for Spark compatibility
+/// e.g. `col IS NULL IS NULL` -> `(col IS NULL) IS NULL`
+fn rewrite_nested_is_null(statement: &mut ast::Statement) {
+    let _ = visit_expressions_mut(statement, |expr: &mut ast::Expr| {
+        if let ast::Expr::IsNull(inner) | ast::Expr::IsNotNull(inner) = expr {
+            if matches!(inner.as_ref(), ast::Expr::IsNull(_) | ast::Expr::IsNotNull(_)) {
+                let inner_clone = inner.as_ref().clone();
+                *inner = Box::new(ast::Expr::Nested(Box::new(inner_clone)));
             }
         }
         ControlFlow::<()>::Continue(())
@@ -445,4 +461,183 @@ fn chrono_to_spark(fmt: &str) -> Result<String> {
         }
     }
     Ok(out)
+}
+
+/// Rewrite column identifiers to properly quote column names with spaces or special characters
+/// Spark SQL requires column names with spaces or special characters to be quoted with backticks
+fn rewrite_column_identifiers(statement: &mut ast::Statement) {
+    // Helper function to quote an identifier if needed
+    let quote_if_needed = |ident: &mut ast::Ident| {
+        if needs_quoting(&ident.value) {
+            ident.quote_style = Some('`');
+        }
+    };
+
+    // First handle expressions (column references)
+    let _ = visit_expressions_mut(statement, |expr: &mut ast::Expr| {
+        match expr {
+            ast::Expr::Identifier(ident) => {
+                quote_if_needed(ident);
+            }
+            ast::Expr::CompoundIdentifier(identifiers) => {
+                for ident in identifiers {
+                    quote_if_needed(ident);
+                }
+            }
+            _ => {}
+        }
+        ControlFlow::<()>::Continue(())
+    });
+
+    // Then handle aliases in all SELECT projections (including nested subqueries)
+    quote_aliases_recursively(statement, &quote_if_needed);
+}
+
+/// Recursively traverse the AST to quote aliases in all SELECT statements
+fn quote_aliases_recursively(statement: &mut ast::Statement, quote_if_needed: &impl Fn(&mut ast::Ident)) {
+    if let ast::Statement::Query(query) = statement {
+        quote_aliases_in_query(query, quote_if_needed);
+    }
+}
+
+/// Quote aliases in a query and all its nested subqueries
+fn quote_aliases_in_query(query: &mut ast::Query, quote_if_needed: &impl Fn(&mut ast::Ident)) {
+    quote_aliases_in_set_expr(&mut query.body, quote_if_needed);
+}
+
+/// Quote aliases in a set expression (SELECT, UNION, etc.)
+fn quote_aliases_in_set_expr(set_expr: &mut ast::SetExpr, quote_if_needed: &impl Fn(&mut ast::Ident)) {
+    match set_expr {
+        ast::SetExpr::Select(select) => {
+            quote_aliases_in_select(select, quote_if_needed);
+        }
+        ast::SetExpr::Query(query) => {
+            quote_aliases_in_query(query, quote_if_needed);
+        }
+        ast::SetExpr::SetOperation { left, right, .. } => {
+            quote_aliases_in_set_expr(left, quote_if_needed);
+            quote_aliases_in_set_expr(right, quote_if_needed);
+        }
+        _ => {
+            // Other set expression types don't have aliases to quote
+        }
+    }
+}
+
+/// Quote aliases in a SELECT statement and handle nested subqueries
+fn quote_aliases_in_select(select: &mut ast::Select, quote_if_needed: &impl Fn(&mut ast::Ident)) {
+    // Quote aliases in the projection list
+    for projection in &mut select.projection {
+        if let ast::SelectItem::ExprWithAlias { alias, .. } = projection {
+            quote_if_needed(alias);
+        }
+    }
+
+    // Recursively handle subqueries in the FROM clause
+    for table_with_joins in &mut select.from {
+        quote_aliases_in_table_with_joins(table_with_joins, quote_if_needed);
+    }
+}
+
+/// Quote aliases in table references and their joins
+fn quote_aliases_in_table_with_joins(table_with_joins: &mut ast::TableWithJoins, quote_if_needed: &impl Fn(&mut ast::Ident)) {
+    quote_aliases_in_table_factor(&mut table_with_joins.relation, quote_if_needed);
+    
+    for join in &mut table_with_joins.joins {
+        quote_aliases_in_table_factor(&mut join.relation, quote_if_needed);
+    }
+}
+
+/// Quote aliases in table factors (tables, subqueries, etc.)
+fn quote_aliases_in_table_factor(table_factor: &mut ast::TableFactor, quote_if_needed: &impl Fn(&mut ast::Ident)) {
+    match table_factor {
+        ast::TableFactor::Derived { subquery, .. } => {
+            quote_aliases_in_query(subquery, quote_if_needed);
+        }
+        ast::TableFactor::NestedJoin { table_with_joins, .. } => {
+            quote_aliases_in_table_with_joins(table_with_joins, quote_if_needed);
+        }
+        _ => {
+            // Other table factor types don't have nested queries to process
+        }
+    }
+}
+
+/// Check if a column name needs to be quoted in Spark SQL
+fn needs_quoting(name: &str) -> bool {
+    // Don't quote function calls (contain parentheses)
+    if name.contains('(') || name.contains(')') {
+        return false;
+    }
+    
+    // Check if the name contains spaces, hyphens, or starts with a digit
+    name.contains(' ') 
+        || name.contains('-') 
+        || name.chars().next().map_or(false, |c| c.is_ascii_digit())
+        || has_special_chars_needing_quotes(name)
+        || is_sql_reserved_word(name)
+}
+
+/// Check if a name contains special characters that require quoting
+/// This is more restrictive than the previous version to avoid quoting function calls
+fn has_special_chars_needing_quotes(name: &str) -> bool {
+    // Only quote for specific problematic characters, not all non-alphanumeric
+    name.chars().any(|c| matches!(c, 
+        '!' | '@' | '#' | '$' | '%' | '^' | '&' | '*' | '+' | '=' | 
+        '[' | ']' | '{' | '}' | '|' | '\\' | ':' | ';' | '"' | '\'' | 
+        '<' | '>' | ',' | '.' | '?' | '/' | '~' | '`'
+    ))
+}
+
+lazy_static! {
+    /// SQL reserved words that need quoting in Spark SQL
+    /// This includes both ANSI SQL and Spark SQL specific reserved words
+    static ref RESERVED_WORDS: std::collections::HashSet<&'static str> = {
+        std::collections::HashSet::from([
+            // ANSI SQL reserved words
+            "SELECT", "FROM", "WHERE", "GROUP", "BY", "HAVING", "ORDER", "LIMIT",
+            "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "TABLE", "INDEX",
+            "VIEW", "DATABASE", "SCHEMA", "COLUMN", "CONSTRAINT", "PRIMARY", "KEY",
+            "FOREIGN", "REFERENCES", "UNIQUE", "NOT", "NULL", "DEFAULT", "CHECK",
+            "UNION", "INTERSECT", "EXCEPT", "JOIN", "INNER", "LEFT", "RIGHT", "FULL",
+            "OUTER", "CROSS", "ON", "USING", "AS", "DISTINCT", "ALL", "ANY", "SOME",
+            "EXISTS", "IN", "BETWEEN", "LIKE", "IS", "AND", "OR", "CASE", "WHEN",
+            "THEN", "ELSE", "END", "IF", "CAST", "CONVERT", "SUBSTRING", "TRIM",
+            "UPPER", "LOWER", "LENGTH", "CHAR", "VARCHAR", "TEXT", "INTEGER", "INT",
+            "BIGINT", "SMALLINT", "DECIMAL", "NUMERIC", "FLOAT", "DOUBLE", "REAL",
+            "BOOLEAN", "DATE", "TIME", "TIMESTAMP", "INTERVAL", "YEAR", "MONTH",
+            "DAY", "HOUR", "MINUTE", "SECOND", "TRUE", "FALSE", "UNKNOWN",
+            
+            // Spark SQL specific reserved words
+            "ARRAY", "MAP", "STRUCT", "BINARY", "TINYINT", "STRING", "PARTITION",
+            "PARTITIONS", "CLUSTER", "DISTRIBUTE", "SORT", "TABLESAMPLE", "LATERAL",
+            "WINDOW", "OVER", "ROW", "ROWS", "RANGE", "PRECEDING", "FOLLOWING",
+            "UNBOUNDED", "CURRENT", "FIRST", "LAST", "IGNORE", "RESPECT", "NULLS",
+            "ROLLUP", "CUBE", "GROUPING", "SETS", "PIVOT", "UNPIVOT", "TRANSFORM",
+            "REDUCE", "AGGREGATE", "FILTER", "WITHIN", "COLLECT_LIST", "COLLECT_SET",
+            "EXPLODE", "INLINE", "POSEXPLODE", "STACK", "JSON_TUPLE", "GET_JSON_OBJECT",
+            "REGEXP_EXTRACT", "REGEXP_REPLACE", "SPLIT", "SIZE", "SORT_ARRAY",
+            "ARRAY_CONTAINS", "MAP_KEYS", "MAP_VALUES", "NAMED_STRUCT", "STRUCT",
+            "DESCRIBE", "DESC", "EXPLAIN", "ANALYZE", "CACHE", "UNCACHE", "REFRESH",
+            "SHOW", "MSCK", "REPAIR", "RECOVER", "EXPORT", "IMPORT", "LOAD", "UNLOAD",
+            "SET", "RESET", "ADD", "LIST", "WITH", "RECURSIVE", "TEMPORARY", "TEMP",
+            "GLOBAL", "LOCAL", "LOCATION", "COMMENT", "TBLPROPERTIES", "SERDEPROPERTIES",
+            "STORED", "INPUTFORMAT", "OUTPUTFORMAT", "SERDE", "DELIMITED", "FIELDS",
+            "TERMINATED", "ESCAPED", "COLLECTION", "ITEMS", "KEYS", "LINES", "DEFINED",
+            "RECORDREADER", "RECORDWRITER", "ROW_FORMAT", "STORED_AS", "CLUSTERED",
+            "SORTED", "INTO", "BUCKETS", "SKEWED", "DIRECTORIES", "PURGE", "ARCHIVE",
+            "UNARCHIVE", "TOUCH", "COMPACT", "CONCATENATE", "CHANGE", "REPLACE",
+            "COLUMNS", "RLIKE", "REGEXP", "FUNCTION", "MACRO", "AGGREGATE", "RETURNS",
+            "LANGUAGE", "DETERMINISTIC", "SQL", "CONTAINS", "READS", "MODIFIES",
+            "NO", "CALLED", "INPUT", "SPECIFIC", "EXTERNAL", "SECURITY", "DEFINER",
+            "INVOKER", "PATH", "ISOLATION", "LEVEL", "READ", "WRITE", "ONLY",
+            "COMMITTED", "UNCOMMITTED", "REPEATABLE", "SERIALIZABLE", "WORK",
+            "TRANSACTION", "START", "COMMIT", "ROLLBACK", "SAVEPOINT", "RELEASE"
+        ])
+    };
+}
+
+/// Check if a name is a SQL reserved word that needs quoting in Spark SQL
+fn is_sql_reserved_word(name: &str) -> bool {
+    RESERVED_WORDS.contains(name.to_uppercase().as_str())
 }

@@ -39,7 +39,7 @@ type CacheValue = (TaskValue, Vec<TaskValue>);
 pub struct VegaFusionRuntime {
     pub cache: VegaFusionCache,
     pub ctx: Arc<SessionContext>,
-    pub default_executor: DataFusionPlanExecutor,
+    pub default_executor: Arc<dyn PlanExecutor>,
 }
 
 impl VegaFusionRuntime {
@@ -47,7 +47,7 @@ impl VegaFusionRuntime {
         let ctx = Arc::new(make_datafusion_context());
         Self {
             cache: cache.unwrap_or_else(|| VegaFusionCache::new(Some(32), None)),
-            default_executor: DataFusionPlanExecutor::new(ctx.clone()),
+            default_executor: Arc::new(DataFusionPlanExecutor::new(ctx.clone())),
             ctx,
         }
     }
@@ -57,15 +57,18 @@ impl VegaFusionRuntime {
         task_graph: Arc<TaskGraph>,
         node_value_index: &NodeValueIndex,
         inline_datasets: HashMap<String, VegaFusionDataset>,
+        plan_executor: Option<Arc<dyn PlanExecutor>>,
     ) -> Result<TaskValue> {
         // We shouldn't panic inside get_or_compute_node_value, but since this may be used
         // in a server context, wrap in catch_unwind just in case.
+        let executor = plan_executor.unwrap_or_else(|| self.default_executor.clone());
         let node_value = AssertUnwindSafe(get_or_compute_node_value(
             task_graph,
             node_value_index.node_index as usize,
             self.cache.clone(),
             inline_datasets,
             self.ctx.clone(),
+            executor,
         ))
         .catch_unwind()
         .await;
@@ -96,6 +99,7 @@ impl VegaFusionRuntimeTrait for VegaFusionRuntime {
         task_graph: Arc<TaskGraph>,
         indices: &[NodeValueIndex],
         inline_datasets: &HashMap<String, VegaFusionDataset>,
+        plan_executor: Option<Arc<dyn PlanExecutor>>,
     ) -> Result<Vec<NamedTaskValue>> {
         // Clone task_graph and task_graph_runtime for use in closure
         let task_graph_runtime = self.clone();
@@ -123,11 +127,12 @@ impl VegaFusionRuntimeTrait for VegaFusionRuntime {
                 // Clone task_graph and task_graph_runtime for use in closure
                 let task_graph_runtime = task_graph_runtime.clone();
                 let task_graph = task_graph.clone();
+                let plan_executor_clone = plan_executor.clone();
 
                 Ok(async move {
                     let value = task_graph_runtime
                         .clone()
-                        .get_node_value(task_graph, node_value_index, inline_datasets.clone())
+                        .get_node_value(task_graph, node_value_index, inline_datasets.clone(), plan_executor_clone)
                         .await?;
 
                     Ok::<_, VegaFusionError>(NamedTaskValue {
@@ -145,24 +150,23 @@ impl VegaFusionRuntimeTrait for VegaFusionRuntime {
     async fn materialize_export_updates(
         &self,
         export_updates: Vec<ExportUpdate>,
-        plan_executor: Option<&dyn PlanExecutor>,
+        plan_executor: Option<Arc<dyn PlanExecutor>>,
     ) -> Result<Vec<ExportUpdateArrow>> {
-        let executor = plan_executor.unwrap_or(&self.default_executor);
+        // TODO: should we remove this implementation in favor of one from the trait?
+        let executor = plan_executor.unwrap_or_else(|| self.default_executor.clone());
 
-        let materialization_futures: Vec<_> = export_updates
-            .into_iter()
-            .map(|export_update| async move {
-                let materialized_value = export_update.value.to_materialized(executor).await?;
-                Ok::<_, VegaFusionError>(ExportUpdateArrow {
-                    namespace: export_update.namespace,
-                    name: export_update.name,
-                    scope: export_update.scope,
-                    value: materialized_value,
-                })
-            })
-            .collect();
+        let mut results = Vec::new();
+        for export_update in export_updates {
+            let materialized_value = export_update.value.to_materialized(executor.clone()).await?;
+            results.push(ExportUpdateArrow {
+                namespace: export_update.namespace,
+                name: export_update.name,
+                scope: export_update.scope,
+                value: materialized_value,
+            });
+        }
 
-        future::try_join_all(materialization_futures).await
+        Ok(results)
     }
 
     fn create_dataset_from_schema(
@@ -185,6 +189,7 @@ async fn get_or_compute_node_value(
     cache: VegaFusionCache,
     inline_datasets: HashMap<String, VegaFusionDataset>,
     ctx: Arc<SessionContext>,
+    plan_executor: Arc<dyn PlanExecutor>,
 ) -> Result<CacheValue> {
     // Get the cache key for requested node
     let node = task_graph.node(node_index).unwrap();
@@ -217,6 +222,7 @@ async fn get_or_compute_node_value(
                     cloned_cache.clone(),
                     inline_datasets.clone(),
                     ctx.clone(),
+                    plan_executor.clone(),
                 );
 
                 cfg_if! {
@@ -264,7 +270,7 @@ async fn get_or_compute_node_value(
                 })
                 .collect::<Result<Vec<_>>>()?;
 
-            task.eval(&input_values, &tz_config, inline_datasets, ctx)
+            task.eval(&input_values, &tz_config, inline_datasets, ctx, plan_executor)
                 .await
         };
 

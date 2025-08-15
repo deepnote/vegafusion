@@ -6,6 +6,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::{Arc, Once};
+use tokio::sync::Mutex;
 use tokio::runtime::Runtime;
 use tonic::transport::{Channel, Uri};
 use vegafusion_core::chart_state::{ChartState as RsChartState, ChartStateOpts};
@@ -21,6 +22,8 @@ use vegafusion_core::proto::gen::tasks::{TzConfig, Variable};
 use vegafusion_runtime::task_graph::GrpcVegaFusionRuntime;
 
 use vegafusion_runtime::task_graph::runtime::VegaFusionRuntime;
+use vegafusion_runtime::sql::logical_plan_to_spark_sql;
+
 
 use env_logger::{Builder, Target};
 use pythonize::{depythonize, pythonize};
@@ -29,7 +32,7 @@ use vegafusion_common::data::table::VegaFusionTable;
 use vegafusion_core::data::dataset::VegaFusionDataset;
 use vegafusion_core::planning::plan::{PlannerConfig, PreTransformSpecWarningSpec, SpecPlan};
 use vegafusion_core::planning::projection_pushdown::get_column_usage as rs_get_column_usage;
-use vegafusion_core::planning::watch::{ExportUpdateJSON, ExportUpdateNamespace, WatchPlan};
+use vegafusion_core::planning::watch::{ExportUpdateJSON, WatchPlan};
 
 use vegafusion_core::spec::chart::ChartSpec;
 use vegafusion_core::task_graph::graph::ScopedVariable;
@@ -64,9 +67,23 @@ struct PythonPlanExecutor {
     python_executor: PyObject,
 }
 
+struct SparkSqlPlanExecutor {
+    python_executor: PyObject,
+    mutex: Arc<Mutex<()>>,
+}
+
 impl PythonPlanExecutor {
     fn new(python_executor: PyObject) -> Self {
         Self { python_executor }
+    }
+}
+
+impl SparkSqlPlanExecutor {
+    fn new(python_executor: PyObject) -> Self {
+        Self { 
+            python_executor,
+            mutex: Arc::new(Mutex::new(())),
+        }
     }
 }
 
@@ -119,21 +136,74 @@ impl PlanExecutor for PythonPlanExecutor {
     }
 }
 
+#[async_trait]
+impl PlanExecutor for SparkSqlPlanExecutor {
+    async fn execute_plan(
+        &self,
+        plan: LogicalPlan,
+    ) -> vegafusion_common::error::Result<VegaFusionTable> {
+        // Acquire mutex lock to ensure only one request runs at a time
+        let _lock = self.mutex.lock().await;
+
+        // Convert logical plan to SparkSQL
+        let spark_sql = logical_plan_to_spark_sql(&plan)?;
+
+        let python_executor = &self.python_executor;
+        let result = tokio::task::spawn_blocking({
+            let python_executor = Python::with_gil(|py| python_executor.clone_ref(py));
+            let spark_sql = spark_sql.clone();
+
+            move || {
+                Python::with_gil(|py| -> PyResult<VegaFusionTable> {
+                    let sql_py = PyString::new(py, &spark_sql);
+
+                    let table_result = if python_executor.bind(py).is_callable() {
+                        python_executor.call1(py, (sql_py,))
+                    } else if python_executor.bind(py).hasattr("execute_plan")? {
+                        let execute_plan_method =
+                            python_executor.bind(py).getattr("execute_plan")?;
+                        execute_plan_method
+                            .call1((sql_py,))
+                            .map(|result| result.into())
+                    } else {
+                        return Err(PyValueError::new_err(
+                            "Executor must be callable or have an execute_plan method",
+                        ));
+                    }?;
+
+                    VegaFusionTable::from_pyarrow(py, &table_result.bind(py))
+                })
+            }
+        })
+        .await;
+
+        match result {
+            Ok(Ok(table)) => Ok(table),
+            Ok(Err(py_err)) => Err(vegafusion_common::error::VegaFusionError::internal(
+                format!("Python executor error: {}", py_err),
+            )),
+            Err(join_err) => Err(vegafusion_common::error::VegaFusionError::internal(
+                format!("Failed to execute Python executor: {}", join_err),
+            )),
+        }
+    }
+}
+
 /// Helper function to convert a Python object to a PlanExecutor
 /// Accepts either:
 /// - A callable that takes a logical plan string and returns an Arrow table
 /// - An object with execute_plan method that has the same signature
 fn python_object_to_executor(
     python_obj: Option<PyObject>,
-) -> PyResult<Option<Box<dyn PlanExecutor>>> {
+) -> PyResult<Option<Arc<dyn PlanExecutor>>> {
     match python_obj {
         Some(obj) => {
-            Python::with_gil(|py| -> PyResult<Option<Box<dyn PlanExecutor>>> {
+            Python::with_gil(|py| -> PyResult<Option<Arc<dyn PlanExecutor>>> {
                 let obj_ref = obj.bind(py);
 
                 // Validate that the object is either callable or has execute_plan method
                 if obj_ref.is_callable() || obj_ref.hasattr("execute_plan")? {
-                    Ok(Some(Box::new(PythonPlanExecutor::new(obj))))
+                    Ok(Some(Arc::new(PythonPlanExecutor::new(obj))))
                 } else {
                     Err(PyValueError::new_err(
                         "Executor must be callable or have an execute_plan method",
@@ -160,7 +230,7 @@ impl PyChartState {
         inline_datasets: HashMap<String, VegaFusionDataset>,
         tz_config: TzConfig,
         row_limit: Option<u32>,
-        executor: Option<&dyn PlanExecutor>,
+        executor: Option<Arc<dyn PlanExecutor>>,
     ) -> PyResult<Self> {
         let state = tokio_runtime.block_on(RsChartState::try_new(
             runtime.as_ref(),
@@ -370,7 +440,6 @@ impl PyVegaFusionRuntime {
 
         let inline_datasets = self.process_inline_datasets(inline_datasets)?;
         let rust_executor = python_object_to_executor(executor)?;
-        let executor_ref = rust_executor.as_deref();
 
         py.allow_threads(|| {
             PyChartState::try_new(
@@ -380,7 +449,7 @@ impl PyVegaFusionRuntime {
                 inline_datasets,
                 tz_config,
                 row_limit,
-                executor_ref,
+                rust_executor,
             )
         })
     }
@@ -415,7 +484,6 @@ impl PyVegaFusionRuntime {
         }
 
         let rust_executor = python_object_to_executor(executor)?;
-        let executor_ref = rust_executor.as_deref();
 
         let (spec, warnings) = py.allow_threads(|| {
             self.tokio_runtime.block_on(
@@ -435,7 +503,95 @@ impl PyVegaFusionRuntime {
                             })
                             .collect(),
                     },
-                    executor_ref,
+                    rust_executor,
+                ),
+            )
+        })?;
+
+        let warnings: Vec<_> = warnings
+            .iter()
+            .map(PreTransformSpecWarningSpec::from)
+            .collect();
+
+        Python::with_gil(|py| -> PyResult<(PyObject, PyObject)> {
+            let py_spec = pythonize::pythonize(py, &spec)?;
+            let py_warnings = pythonize::pythonize(py, &warnings)?;
+            Ok((py_spec.into(), py_warnings.into()))
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (spec, output_format, local_tz, executor, default_input_tz=None, row_limit=None, preserve_interactivity=None, inline_datasets=None, keep_signals=None, keep_datasets=None))]
+    pub fn pre_transform_spec_vendor(
+        &self,
+        py: Python,
+        spec: PyObject,
+        output_format: String,
+        local_tz: String,
+        executor: PyObject,
+        default_input_tz: Option<String>,
+        row_limit: Option<u32>,
+        preserve_interactivity: Option<bool>,
+        inline_datasets: Option<&Bound<PyDict>>,
+        keep_signals: Option<Vec<(String, Vec<u32>)>>,
+        keep_datasets: Option<Vec<(String, Vec<u32>)>>,
+    ) -> PyResult<(PyObject, PyObject)> {
+        // Check output format - only sparksql is supported for now
+        if output_format != "sparksql" {
+            return Err(PyValueError::new_err(format!(
+                "Unsupported output format: '{}'. Currently only 'sparksql' is supported.",
+                output_format
+            )));
+        }
+
+        // Validate executor
+        Python::with_gil(|py| -> PyResult<()> {
+            let obj_ref = executor.bind(py);
+            if !obj_ref.is_callable() && !obj_ref.hasattr("execute_plan")? {
+                return Err(PyValueError::new_err(
+                    "Executor must be callable or have an execute_plan method",
+                ));
+            }
+            Ok(())
+        })?;
+
+        // Create SparkSQL middleware executor
+        let spark_executor = Arc::new(SparkSqlPlanExecutor::new(executor));
+
+        // Process inline datasets
+        let inline_datasets = self.process_inline_datasets(inline_datasets)?;
+        let spec = parse_json_spec(spec)?;
+        let preserve_interactivity = preserve_interactivity.unwrap_or(false);
+
+        // Build keep_variables
+        let mut keep_variables: Vec<ScopedVariable> = Vec::new();
+        for (name, scope) in keep_signals.unwrap_or_default() {
+            keep_variables.push((Variable::new_signal(&name), scope))
+        }
+        for (name, scope) in keep_datasets.unwrap_or_default() {
+            keep_variables.push((Variable::new_data(&name), scope))
+        }
+
+        // Call the original pre_transform_spec with the SparkSQL executor
+        let (spec, warnings) = py.allow_threads(|| {
+            self.tokio_runtime.block_on(
+                self.runtime.pre_transform_spec(
+                    &spec,
+                    &inline_datasets,
+                    &PreTransformSpecOpts {
+                        local_tz,
+                        default_input_tz,
+                        row_limit,
+                        preserve_interactivity,
+                        keep_variables: keep_variables
+                            .into_iter()
+                            .map(|v| PreTransformVariable {
+                                variable: Some(v.0),
+                                scope: v.1,
+                            })
+                            .collect(),
+                    },
+                    Some(spark_executor),
                 ),
             )
         })?;
@@ -488,6 +644,7 @@ impl PyVegaFusionRuntime {
                         default_input_tz,
                         row_limit,
                     },
+                    None,
                 ))
         })?;
 
@@ -561,7 +718,6 @@ impl PyVegaFusionRuntime {
         }
 
         let rust_executor = python_object_to_executor(executor)?;
-        let executor_ref = rust_executor.as_deref();
 
         let (tx_spec, datasets, warnings) = py.allow_threads(|| {
             self.tokio_runtime
@@ -575,7 +731,7 @@ impl PyVegaFusionRuntime {
                         extract_threshold: extract_threshold as i32,
                         keep_variables,
                     },
-                    executor_ref,
+                    rust_executor,
                 ))
         })?;
 
@@ -670,6 +826,7 @@ impl PyVegaFusionRuntime {
                         preserve_interactivity,
                         keep_variables,
                     },
+                    None,
                 ))
         })?;
 
@@ -742,141 +899,7 @@ impl PyVegaFusionRuntime {
         ))
     }
 
-    #[cfg(feature = "logical-plan")]
-    #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (spec, output_format, inline_dataset_schemas, local_tz, default_input_tz=None, preserve_interactivity=None, keep_signals=None, keep_datasets=None))]
-    pub fn pre_transform_logical_plan_vendor(
-        &self,
-        py: Python,
-        spec: PyObject,
-        output_format: String,
-        inline_dataset_schemas: Option<&Bound<PyDict>>,
-        local_tz: String,
-        default_input_tz: Option<String>,
-        preserve_interactivity: Option<bool>,
-        keep_signals: Option<Vec<(String, Vec<u32>)>>,
-        keep_datasets: Option<Vec<(String, Vec<u32>)>>,
-    ) -> PyResult<(PyObject, PyObject, PyObject)> {
-        // Copy the complete logic from pre_transform_logical_plan
-        let spec = parse_json_spec(spec)?;
-        let preserve_interactivity = preserve_interactivity.unwrap_or(true);
 
-        let mut schemas: HashMap<String, SchemaRef> = HashMap::new();
-        if let Some(schemas_dict) = inline_dataset_schemas {
-            for (name, schema_obj) in schemas_dict.iter() {
-                let name = name.to_string();
-                let pyschema = schema_obj.extract::<PySchema>()?;
-                let schema = pyschema.into_inner();
-                schemas.insert(name, schema);
-            }
-        }
-
-        let mut keep_variables: Vec<PreTransformVariable> = Vec::new();
-        for (name, scope) in keep_signals.unwrap_or_default() {
-            keep_variables.push(PreTransformVariable {
-                variable: Some(Variable::new_signal(&name)),
-                scope,
-            });
-        }
-        for (name, scope) in keep_datasets.unwrap_or_default() {
-            keep_variables.push(PreTransformVariable {
-                variable: Some(Variable::new_data(&name)),
-                scope,
-            });
-        }
-
-        let (client_spec, export_updates, warnings) = py.allow_threads(|| {
-            self.tokio_runtime
-                .block_on(self.runtime.pre_transform_logical_plan(
-                    &spec,
-                    schemas,
-                    &PreTransformLogicalPlanOpts {
-                        local_tz,
-                        default_input_tz,
-                        preserve_interactivity,
-                        keep_variables,
-                    },
-                ))
-        })?;
-
-        Python::with_gil(|py| -> PyResult<(PyObject, PyObject, PyObject)> {
-            let py_spec = pythonize::pythonize(py, &client_spec)?;
-
-            let py_export_list = PyList::empty(py);
-            for export_update in export_updates {
-                let py_export_dict = PyDict::new(py);
-                py_export_dict.set_item("name", export_update.name)?;
-
-                let namespace_str = match export_update.namespace {
-                    ExportUpdateNamespace::Signal => "signal",
-                    ExportUpdateNamespace::Data => "data",
-                };
-                py_export_dict.set_item("namespace", namespace_str)?;
-
-                match export_update.value {
-                    TaskValue::Plan(plan) => {
-                        // TODO: we probably want more flexible serialization format than pg_json, but protobuf fails with our memtable
-                        let lp_str = format!("{}", plan.display_pg_json());
-                        py_export_dict.set_item("logical_plan", PyString::new(py, &lp_str))?;
-
-                        // Add vendor-specific SQL generation for logical plans
-                        if output_format == "sparksql" {
-                            let spark_sql =
-                                vegafusion_runtime::sql::logical_plan_to_spark_sql(&plan)?;
-                            py_export_dict.set_item("sparksql", spark_sql)?;
-                        }
-                    }
-                    TaskValue::Table(table) => {
-                        // Convert table to PyArrow
-                        let pytable = table.to_pyo3_arrow()?.to_pyarrow(py)?;
-                        py_export_dict.set_item("data", pytable)?;
-                    }
-                    TaskValue::Scalar(scalar) => {
-                        // Convert scalar to JSON value
-                        let json_value = scalar.to_json()?;
-                        let py_json_value = pythonize::pythonize(py, &json_value)?;
-                        py_export_dict.set_item("data", py_json_value)?;
-                    }
-                }
-
-                py_export_list.append(py_export_dict)?;
-            }
-
-            // TODO: this is hacky, we need to pass planner warning messages to end user
-            let warnings: Vec<_> = warnings
-                .iter()
-                .map(|_warning| PreTransformSpecWarningSpec {
-                    typ: "Planner".to_string(),
-                    message: "Warning occurred during pre-transformation".to_string(),
-                })
-                .collect();
-
-            let py_warnings = pythonize::pythonize(py, &warnings)?;
-
-            Ok((py_spec.into(), py_export_list.into(), py_warnings.into()))
-        })
-    }
-
-    #[cfg(not(feature = "logical-plan"))]
-    #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (_spec, _output_format, _inline_dataset_schemas, _local_tz, _default_input_tz=None, _preserve_interactivity=None, _keep_signals=None, _keep_datasets=None))]
-    pub fn pre_transform_logical_plan_vendor(
-        &self,
-        _py: Python,
-        _spec: PyObject,
-        _output_format: String,
-        _inline_dataset_schemas: Option<&Bound<PyDict>>,
-        _local_tz: String,
-        _default_input_tz: Option<String>,
-        _preserve_interactivity: Option<bool>,
-        _keep_signals: Option<Vec<(String, Vec<u32>)>>,
-        _keep_datasets: Option<Vec<(String, Vec<u32>)>>,
-    ) -> PyResult<(PyObject, PyObject, PyObject)> {
-        Err(PyValueError::new_err(
-            "pre_transform_logical_plan_vendor requires the 'logical-plan' feature. \
-                                        Recompile vegafusion-python with the logical-plan feature.",
-        ))
-    }
 
     pub fn clear_cache(&self) -> PyResult<()> {
         if let Some(runtime) = self.runtime.as_any().downcast_ref::<VegaFusionRuntime>() {

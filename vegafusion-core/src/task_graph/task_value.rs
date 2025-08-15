@@ -6,6 +6,7 @@ use crate::task_graph::memory::{inner_size_of_scalar, inner_size_of_table};
 use datafusion_common::ScalarValue;
 use serde_json::Value;
 use std::convert::TryFrom;
+use std::sync::Arc;
 use vegafusion_common::arrow::record_batch::RecordBatch;
 use vegafusion_common::data::scalar::ScalarValueHelpers;
 use vegafusion_common::data::table::VegaFusionTable;
@@ -65,7 +66,7 @@ impl TaskValue {
 
     pub async fn to_materialized(
         self,
-        plan_executor: &dyn PlanExecutor,
+        plan_executor: Arc<dyn PlanExecutor>,
     ) -> Result<MaterializedTaskValue> {
         match self {
             TaskValue::Plan(plan) => {

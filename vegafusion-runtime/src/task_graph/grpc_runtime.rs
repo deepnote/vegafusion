@@ -7,7 +7,7 @@ use vegafusion_core::{
         },
         tasks::{NodeValueIndex, TaskGraph, TaskGraphValueRequest},
     },
-    runtime::VegaFusionRuntimeTrait,
+    runtime::{PlanExecutor, VegaFusionRuntimeTrait},
     task_graph::task_value::NamedTaskValue,
 };
 
@@ -34,6 +34,7 @@ impl VegaFusionRuntimeTrait for GrpcVegaFusionRuntime {
         task_graph: Arc<TaskGraph>,
         indices: &[NodeValueIndex],
         inline_datasets: &HashMap<String, VegaFusionDataset>,
+        _plan_executor: Option<Arc<dyn PlanExecutor>>,
     ) -> Result<Vec<NamedTaskValue>> {
         let inline_datasets = encode_inline_datasets(inline_datasets)?;
         let request = QueryRequest {
