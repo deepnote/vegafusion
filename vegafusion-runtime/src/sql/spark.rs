@@ -212,7 +212,10 @@ fn rewrite_intervals(statement: &mut ast::Statement) {
 fn rewrite_nested_is_null(statement: &mut ast::Statement) {
     let _ = visit_expressions_mut(statement, |expr: &mut ast::Expr| {
         if let ast::Expr::IsNull(inner) | ast::Expr::IsNotNull(inner) = expr {
-            if matches!(inner.as_ref(), ast::Expr::IsNull(_) | ast::Expr::IsNotNull(_)) {
+            if matches!(
+                inner.as_ref(),
+                ast::Expr::IsNull(_) | ast::Expr::IsNotNull(_)
+            ) {
                 let inner_clone = inner.as_ref().clone();
                 *inner = Box::new(ast::Expr::Nested(Box::new(inner_clone)));
             }
@@ -494,7 +497,10 @@ fn rewrite_column_identifiers(statement: &mut ast::Statement) {
 }
 
 /// Recursively traverse the AST to quote aliases in all SELECT statements
-fn quote_aliases_recursively(statement: &mut ast::Statement, quote_if_needed: &impl Fn(&mut ast::Ident)) {
+fn quote_aliases_recursively(
+    statement: &mut ast::Statement,
+    quote_if_needed: &impl Fn(&mut ast::Ident),
+) {
     if let ast::Statement::Query(query) = statement {
         quote_aliases_in_query(query, quote_if_needed);
     }
@@ -506,7 +512,10 @@ fn quote_aliases_in_query(query: &mut ast::Query, quote_if_needed: &impl Fn(&mut
 }
 
 /// Quote aliases in a set expression (SELECT, UNION, etc.)
-fn quote_aliases_in_set_expr(set_expr: &mut ast::SetExpr, quote_if_needed: &impl Fn(&mut ast::Ident)) {
+fn quote_aliases_in_set_expr(
+    set_expr: &mut ast::SetExpr,
+    quote_if_needed: &impl Fn(&mut ast::Ident),
+) {
     match set_expr {
         ast::SetExpr::Select(select) => {
             quote_aliases_in_select(select, quote_if_needed);
@@ -540,21 +549,29 @@ fn quote_aliases_in_select(select: &mut ast::Select, quote_if_needed: &impl Fn(&
 }
 
 /// Quote aliases in table references and their joins
-fn quote_aliases_in_table_with_joins(table_with_joins: &mut ast::TableWithJoins, quote_if_needed: &impl Fn(&mut ast::Ident)) {
+fn quote_aliases_in_table_with_joins(
+    table_with_joins: &mut ast::TableWithJoins,
+    quote_if_needed: &impl Fn(&mut ast::Ident),
+) {
     quote_aliases_in_table_factor(&mut table_with_joins.relation, quote_if_needed);
-    
+
     for join in &mut table_with_joins.joins {
         quote_aliases_in_table_factor(&mut join.relation, quote_if_needed);
     }
 }
 
 /// Quote aliases in table factors (tables, subqueries, etc.)
-fn quote_aliases_in_table_factor(table_factor: &mut ast::TableFactor, quote_if_needed: &impl Fn(&mut ast::Ident)) {
+fn quote_aliases_in_table_factor(
+    table_factor: &mut ast::TableFactor,
+    quote_if_needed: &impl Fn(&mut ast::Ident),
+) {
     match table_factor {
         ast::TableFactor::Derived { subquery, .. } => {
             quote_aliases_in_query(subquery, quote_if_needed);
         }
-        ast::TableFactor::NestedJoin { table_with_joins, .. } => {
+        ast::TableFactor::NestedJoin {
+            table_with_joins, ..
+        } => {
             quote_aliases_in_table_with_joins(table_with_joins, quote_if_needed);
         }
         _ => {
@@ -569,10 +586,10 @@ fn needs_quoting(name: &str) -> bool {
     if name.contains('(') || name.contains(')') {
         return false;
     }
-    
+
     // Check if the name contains spaces, hyphens, or starts with a digit
-    name.contains(' ') 
-        || name.contains('-') 
+    name.contains(' ')
+        || name.contains('-')
         || name.chars().next().map_or(false, |c| c.is_ascii_digit())
         || has_special_chars_needing_quotes(name)
         || is_sql_reserved_word(name)
@@ -582,11 +599,38 @@ fn needs_quoting(name: &str) -> bool {
 /// This is more restrictive than the previous version to avoid quoting function calls
 fn has_special_chars_needing_quotes(name: &str) -> bool {
     // Only quote for specific problematic characters, not all non-alphanumeric
-    name.chars().any(|c| matches!(c, 
-        '!' | '@' | '#' | '$' | '%' | '^' | '&' | '*' | '+' | '=' | 
-        '[' | ']' | '{' | '}' | '|' | '\\' | ':' | ';' | '"' | '\'' | 
-        '<' | '>' | ',' | '.' | '?' | '/' | '~' | '`'
-    ))
+    name.chars().any(|c| {
+        matches!(
+            c,
+            '!' | '@'
+                | '#'
+                | '$'
+                | '%'
+                | '^'
+                | '&'
+                | '*'
+                | '+'
+                | '='
+                | '['
+                | ']'
+                | '{'
+                | '}'
+                | '|'
+                | '\\'
+                | ':'
+                | ';'
+                | '"'
+                | '\''
+                | '<'
+                | '>'
+                | ','
+                | '.'
+                | '?'
+                | '/'
+                | '~'
+                | '`'
+        )
+    })
 }
 
 lazy_static! {
@@ -607,7 +651,7 @@ lazy_static! {
             "BIGINT", "SMALLINT", "DECIMAL", "NUMERIC", "FLOAT", "DOUBLE", "REAL",
             "BOOLEAN", "DATE", "TIME", "TIMESTAMP", "INTERVAL", "YEAR", "MONTH",
             "DAY", "HOUR", "MINUTE", "SECOND", "TRUE", "FALSE", "UNKNOWN",
-            
+
             // Spark SQL specific reserved words
             "ARRAY", "MAP", "STRUCT", "BINARY", "TINYINT", "STRING", "PARTITION",
             "PARTITIONS", "CLUSTER", "DISTRIBUTE", "SORT", "TABLESAMPLE", "LATERAL",

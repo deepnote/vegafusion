@@ -132,7 +132,12 @@ impl VegaFusionRuntimeTrait for VegaFusionRuntime {
                 Ok(async move {
                     let value = task_graph_runtime
                         .clone()
-                        .get_node_value(task_graph, node_value_index, inline_datasets.clone(), plan_executor_clone)
+                        .get_node_value(
+                            task_graph,
+                            node_value_index,
+                            inline_datasets.clone(),
+                            plan_executor_clone,
+                        )
                         .await?;
 
                     Ok::<_, VegaFusionError>(NamedTaskValue {
@@ -157,7 +162,10 @@ impl VegaFusionRuntimeTrait for VegaFusionRuntime {
 
         let mut results = Vec::new();
         for export_update in export_updates {
-            let materialized_value = export_update.value.to_materialized(executor.clone()).await?;
+            let materialized_value = export_update
+                .value
+                .to_materialized(executor.clone())
+                .await?;
             results.push(ExportUpdateArrow {
                 namespace: export_update.namespace,
                 name: export_update.name,
@@ -270,8 +278,14 @@ async fn get_or_compute_node_value(
                 })
                 .collect::<Result<Vec<_>>>()?;
 
-            task.eval(&input_values, &tz_config, inline_datasets, ctx, plan_executor)
-                .await
+            task.eval(
+                &input_values,
+                &tz_config,
+                inline_datasets,
+                ctx,
+                plan_executor,
+            )
+            .await
         };
 
         // get or construct from cache

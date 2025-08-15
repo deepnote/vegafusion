@@ -26,6 +26,7 @@ def _discover_spec_files(limit: Optional[int] = None) -> list[Path]:
     specs_sorted = sorted(specs_filtered)
     return specs_sorted[:limit] if limit is not None else specs_sorted
 
+
 @pytest.fixture(scope="session")
 def spark():
     """Initialise a local SparkSession for the duration of the test session."""
@@ -49,8 +50,8 @@ def spark():
 
     # Convert datetime column from bigint (nanoseconds) to actual timestamp
     sales_data_df = sales_data_df.withColumn(
-        "datetime", 
-        to_utc_timestamp((col("datetime") / 1e9).cast("timestamp"), current_timezone())
+        "datetime",
+        to_utc_timestamp((col("datetime") / 1e9).cast("timestamp"), current_timezone()),
     )
 
     sales_data_df.createOrReplaceTempView("sales_data_1kk")

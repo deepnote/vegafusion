@@ -35,10 +35,22 @@ impl TaskCall for Task {
     ) -> Result<(TaskValue, Vec<TaskValue>)> {
         match self.task_kind() {
             TaskKind::Value(value) => Ok((value.try_into()?, Default::default())),
-            TaskKind::DataUrl(task) => task.eval(values, tz_config, inline_datasets, ctx, plan_executor).await,
-            TaskKind::DataValues(task) => task.eval(values, tz_config, inline_datasets, ctx, plan_executor).await,
-            TaskKind::DataSource(task) => task.eval(values, tz_config, inline_datasets, ctx, plan_executor).await,
-            TaskKind::Signal(task) => task.eval(values, tz_config, inline_datasets, ctx, plan_executor).await,
+            TaskKind::DataUrl(task) => {
+                task.eval(values, tz_config, inline_datasets, ctx, plan_executor)
+                    .await
+            }
+            TaskKind::DataValues(task) => {
+                task.eval(values, tz_config, inline_datasets, ctx, plan_executor)
+                    .await
+            }
+            TaskKind::DataSource(task) => {
+                task.eval(values, tz_config, inline_datasets, ctx, plan_executor)
+                    .await
+            }
+            TaskKind::Signal(task) => {
+                task.eval(values, tz_config, inline_datasets, ctx, plan_executor)
+                    .await
+            }
         }
     }
 }

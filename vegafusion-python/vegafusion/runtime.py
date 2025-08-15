@@ -482,10 +482,12 @@ class VegaFusionRuntime:
         keep_datasets: list[Union[str, tuple[str, list[int]]]] | None = None,
     ) -> tuple[dict[str, Any], list[PreTransformWarning]]:
         """
-        Evaluate supported transforms in an input Vega specification with vendor-specific execution.
+        Evaluate supported transforms in an input Vega specification
+        with vendor-specific execution.
 
-        This method extends pre_transform_spec by providing vendor-specific SQL generation
-        capabilities. Currently supports SparkSQL output format.
+        This method extends pre_transform_spec by providing
+        vendor-specific SQL generation capabilities. Currently
+        supports SparkSQL output format.
 
         Args:
             spec: A Vega specification dict or JSON string
@@ -493,7 +495,7 @@ class VegaFusionRuntime:
             local_tz: Name of timezone to be considered local. E.g. 'America/New_York'.
                 Defaults to the value of vf.get_local_tz(), which defaults to the system
                 timezone if one can be determined.
-            executor: A custom executor for SQL execution. Required parameter. Can be either:
+            executor: A custom executor for SQL execution, required. Can be either:
                 * A callable that takes a SQL string and returns an Arrow table
                 * An object with an execute_plan method that has the same signature
             default_input_tz: Name of timezone (e.g. 'America/New_York') that naive
@@ -964,8 +966,6 @@ class VegaFusionRuntime:
         )
 
         return new_spec, export_updates, warnings
-
-
 
     @property
     def worker_threads(self) -> int | None:

@@ -62,7 +62,10 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
 
         let mut result = Vec::new();
         for export_update in export_updates {
-            let materialized_value = export_update.value.to_materialized(executor.clone()).await?;
+            let materialized_value = export_update
+                .value
+                .to_materialized(executor.clone())
+                .await?;
             result.push(ExportUpdateArrow {
                 namespace: export_update.namespace,
                 name: export_update.name,
@@ -161,7 +164,9 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
             )
             .await?;
 
-        let init_arrow = self.materialize_export_updates(init, plan_executor.clone()).await?;
+        let init_arrow = self
+            .materialize_export_updates(init, plan_executor.clone())
+            .await?;
 
         apply_pre_transform_datasets(input_spec, &plan, init_arrow, options.row_limit)
     }
@@ -196,7 +201,9 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
                 plan_executor.clone(),
             )
             .await?;
-        let init_arrow = self.materialize_export_updates(init, plan_executor.clone()).await?;
+        let init_arrow = self
+            .materialize_export_updates(init, plan_executor.clone())
+            .await?;
 
         // Update client spec with server values
         let mut spec = plan.client_spec.clone();
@@ -379,7 +386,12 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
 
         // perform query
         let named_task_values = self
-            .query_request(Arc::new(task_graph.clone()), &indices, inline_datasets, plan_executor)
+            .query_request(
+                Arc::new(task_graph.clone()),
+                &indices,
+                inline_datasets,
+                plan_executor,
+            )
             .await?;
 
         // Collect values and handle row limit

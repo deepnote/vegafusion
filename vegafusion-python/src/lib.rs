@@ -6,8 +6,8 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::{Arc, Once};
-use tokio::sync::Mutex;
 use tokio::runtime::Runtime;
+use tokio::sync::Mutex;
 use tonic::transport::{Channel, Uri};
 use vegafusion_core::chart_state::{ChartState as RsChartState, ChartStateOpts};
 use vegafusion_core::error::{ToExternalError, VegaFusionError};
@@ -21,9 +21,8 @@ use vegafusion_core::proto::gen::pretransform::{
 use vegafusion_core::proto::gen::tasks::{TzConfig, Variable};
 use vegafusion_runtime::task_graph::GrpcVegaFusionRuntime;
 
-use vegafusion_runtime::task_graph::runtime::VegaFusionRuntime;
 use vegafusion_runtime::sql::logical_plan_to_spark_sql;
-
+use vegafusion_runtime::task_graph::runtime::VegaFusionRuntime;
 
 use env_logger::{Builder, Target};
 use pythonize::{depythonize, pythonize};
@@ -80,7 +79,7 @@ impl PythonPlanExecutor {
 
 impl SparkSqlPlanExecutor {
     fn new(python_executor: PyObject) -> Self {
-        Self { 
+        Self {
             python_executor,
             mutex: Arc::new(Mutex::new(())),
         }
@@ -898,8 +897,6 @@ impl PyVegaFusionRuntime {
             Please reinstall vegafusion with logical plan support enabled.",
         ))
     }
-
-
 
     pub fn clear_cache(&self) -> PyResult<()> {
         if let Some(runtime) = self.runtime.as_any().downcast_ref::<VegaFusionRuntime>() {

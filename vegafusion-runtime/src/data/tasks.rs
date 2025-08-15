@@ -2,8 +2,8 @@ use crate::expression::compiler::compile;
 use crate::expression::compiler::config::CompilationConfig;
 use crate::expression::compiler::utils::ExprHelpers;
 use crate::task_graph::task::TaskCall;
-use vegafusion_core::runtime::PlanExecutor;
 use std::borrow::Cow;
+use vegafusion_core::runtime::PlanExecutor;
 
 use async_trait::async_trait;
 
@@ -111,7 +111,8 @@ impl TaskCall for DataUrlTask {
         plan_executor: Arc<dyn PlanExecutor>,
     ) -> Result<(TaskValue, Vec<TaskValue>)> {
         // Build compilation config for url signal (if any) and transforms (if any)
-        let config = build_compilation_config(&self.input_vars(), values, tz_config, plan_executor.clone());
+        let config =
+            build_compilation_config(&self.input_vars(), values, tz_config, plan_executor.clone());
 
         // Build url string
         let url = match self.url.as_ref().unwrap() {
@@ -534,8 +535,12 @@ impl TaskCall for DataValuesTask {
         {
             let pipeline = self.pipeline.as_ref().unwrap();
 
-            let config =
-                build_compilation_config(&self.input_vars(), values, tz_config, plan_executor.clone());
+            let config = build_compilation_config(
+                &self.input_vars(),
+                values,
+                tz_config,
+                plan_executor.clone(),
+            );
 
             // Process datetime columns
             let df = ctx.vegafusion_table(values_table).await?;
@@ -571,7 +576,8 @@ impl TaskCall for DataSourceTask {
         plan_executor: Arc<dyn PlanExecutor>,
     ) -> Result<(TaskValue, Vec<TaskValue>)> {
         let input_vars = self.input_vars();
-        let mut config = build_compilation_config(&input_vars, values, tz_config, plan_executor.clone());
+        let mut config =
+            build_compilation_config(&input_vars, values, tz_config, plan_executor.clone());
 
         // Remove source dataset from config
         let source_dataset = config.data_scope.remove(&self.source).with_context(|| {

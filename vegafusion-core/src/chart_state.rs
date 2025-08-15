@@ -96,7 +96,12 @@ impl ChartState {
             .collect();
 
         let response_task_values = runtime
-            .query_request(Arc::new(task_graph.clone()), &indices, &inline_datasets, plan_executor.clone())
+            .query_request(
+                Arc::new(task_graph.clone()),
+                &indices,
+                &inline_datasets,
+                plan_executor.clone(),
+            )
             .await?;
 
         let mut init = Vec::new();

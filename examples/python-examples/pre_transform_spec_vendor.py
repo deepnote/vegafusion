@@ -14,14 +14,13 @@ The example:
 7. Returns the transformed specification with pre-computed data
 """
 
-import json
 import pandas as pd
 import pyarrow as pa
 from typing import Any
 
 try:
     from pyspark.sql import SparkSession
-    from pyspark.sql.functions import col, to_utc_timestamp, current_timezone
+
     SPARK_AVAILABLE = True
 except ImportError:
     print("PySpark not available. Please install pyspark to run this example.")
@@ -33,32 +32,31 @@ import vegafusion as vf
 
 def create_spark_executor(spark_session: SparkSession):
     """Create a Spark executor function that executes SQL queries."""
-    
+
     def spark_executor(sql_query: str) -> pa.Table:
         """Execute SQL query using Spark and return Arrow table."""
-        print(f"🔥 Executing Spark SQL:")
+        print("🔥 Executing Spark SQL:")
         print(f"   {sql_query}")
         print("-" * 60)
-        
+
         # Execute the SQL query
         spark_df = spark_session.sql(sql_query)
-        
+
         # Convert to Pandas, then to Arrow
         pandas_df = spark_df.toPandas()
-        print('Got response from Spark, rows:', len(pandas_df))
+        print("Got response from Spark, rows:", len(pandas_df))
         arrow_table = pa.Table.from_pandas(pandas_df)
         return arrow_table
-    
+
     return spark_executor
 
 
 def setup_spark_session() -> SparkSession:
     """Initialize a local Spark session with appropriate configuration."""
     print("🚀 Setting up Spark session...")
-    
+
     spark = (
-        SparkSession.builder
-        .appName("vegafusion-spec-vendor-example")
+        SparkSession.builder.appName("vegafusion-spec-vendor-example")
         .config("spark.sql.execution.arrow.pyspark.enabled", "true")
         .config("spark.sql.execution.arrow.pyspark.fallback.enabled", "true")
         .config("spark.executor.memory", "2g")
@@ -66,48 +64,48 @@ def setup_spark_session() -> SparkSession:
         .master("local[2]")
         .getOrCreate()
     )
-    
+
     # Set timezone to UTC for consistency
     spark.sql("SET TIME ZONE 'UTC'")
     print("✅ Spark session created successfully")
-    
+
     return spark
 
 
 def load_and_register_movies_data(spark: SparkSession) -> pa.Schema:
     """Load movies data and register it as a Spark table."""
     print("📊 Loading movies data...")
-    
+
     # Load data using pandas from the Vega datasets repository
     movies_url = "https://raw.githubusercontent.com/vega/vega-datasets/refs/heads/main/data/movies.json"
     movies_df = pd.read_json(movies_url)
-    
+
     print(f"✅ Loaded {len(movies_df)} movies")
     print(f"   Columns: {list(movies_df.columns)}")
-    
+
     # Fix data types to handle None values properly for PyArrow conversion
     # Convert columns with mixed types to appropriate nullable types
     for col in movies_df.columns:
-        if movies_df[col].dtype == 'object':
+        if movies_df[col].dtype == "object":
             # Check if column contains numeric data mixed with None
             non_null_values = movies_df[col].dropna()
             if len(non_null_values) > 0:
                 # Try to convert to numeric if possible
                 try:
-                    numeric_series = pd.to_numeric(non_null_values, errors='raise')
+                    pd.to_numeric(non_null_values, errors="raise")
                     # If successful, convert the entire column to nullable numeric
-                    movies_df[col] = pd.to_numeric(movies_df[col], errors='coerce')
+                    movies_df[col] = pd.to_numeric(movies_df[col], errors="coerce")
                 except (ValueError, TypeError):
                     # Keep as string type, but ensure consistent string representation
-                    movies_df[col] = movies_df[col].astype('string')
-    
+                    movies_df[col] = movies_df[col].astype("string")
+
     # Create Spark DataFrame
     spark_df = spark.createDataFrame(movies_df)
-    
+
     # Register as temporary table
     spark_df.createOrReplaceTempView("movies")
     print("✅ Movies data registered as 'movies' table in Spark")
-    
+
     # Return Arrow schema instead of the full DataFrame
     # Use the Spark DataFrame to get a consistent schema since Spark handles mixed types better
     arrow_schema = spark_df.schema.json()
@@ -121,29 +119,29 @@ def main():
     """Main example function."""
     if not SPARK_AVAILABLE:
         return
-    
+
     print("=" * 80)
     print("VegaFusion pre_transform_spec_vendor Example with Apache Spark")
     print("=" * 80)
-    
+
     # Setup Spark
     spark = setup_spark_session()
-    
+
     try:
         # Load and register data
         movies_schema = load_and_register_movies_data(spark)
-        
+
         # Create Spark executor
         spark_executor = create_spark_executor(spark)
-        
+
         # Get the Vega specification
         spec = get_spec()
-        
+
         print("\n🔧 Running pre_transform_spec_vendor...")
         print(f"   Using Arrow schema with {len(movies_schema)} fields:")
         for field in movies_schema:
             print(f"     - {field.name}: {field.type}")
-        
+
         # Use pre_transform_spec_vendor with Spark executor
         # Pass only the schema, not the full data
         transformed_spec, warnings = vf.runtime.pre_transform_spec_vendor(
@@ -152,31 +150,33 @@ def main():
             executor=spark_executor,
             local_tz="UTC",
             preserve_interactivity=False,
-            inline_datasets={"movies": movies_schema}
+            inline_datasets={"movies": movies_schema},
         )
-        
-        print(f"\n✅ Transformation completed!")
+
+        print("\n✅ Transformation completed!")
         print(f"   Warnings: {len(warnings)}")
-        
+
         if warnings:
             print("⚠️  Warnings:")
             for warning in warnings:
                 print(f"   - {warning['type']}: {warning['message']}")
-        
+
         # Print some info about the transformed spec
-        print(f"\n📋 Transformed specification:")
+        print("\n📋 Transformed specification:")
         print(f"   Data sources: {len(transformed_spec.get('data', []))}")
-        
+
         # Show inline data info
-        for data_source in transformed_spec.get('data', []):
-            if 'values' in data_source:
-                values = data_source['values']
+        for data_source in transformed_spec.get("data", []):
+            if "values" in data_source:
+                values = data_source["values"]
                 print(f"   - '{data_source['name']}': {len(values)} inline rows")
-            elif 'url' in data_source:
-                print(f"   - '{data_source['name']}': external URL ({data_source['url']})")
-        
-        print(f"\n🎯 Example completed successfully!")
-        
+            elif "url" in data_source:
+                print(
+                    f"   - '{data_source['name']}': external URL ({data_source['url']})"
+                )
+
+        print("\n🎯 Example completed successfully!")
+
     finally:
         # Clean up
         print("\n🧹 Stopping Spark session...")
@@ -196,110 +196,79 @@ def get_spec() -> dict[str, Any]:
         "height": 300,
         "padding": 5,
         "autosize": {"type": "fit", "resize": True},
-        
         "signals": [
             {
-                "name": "maxbins", 
+                "name": "maxbins",
                 "value": 15,
-                "bind": {"input": "select", "options": [5, 10, 15, 20]}
+                "bind": {"input": "select", "options": [5, 10, 15, 20]},
             },
-            {
-                "name": "binCount",
-                "update": "(bins.stop - bins.start) / bins.step"
-            },
-            {
-                "name": "nullGap", 
-                "value": 10
-            },
-            {
-                "name": "barStep",
-                "update": "(width - nullGap) / (1 + binCount)"
-            }
+            {"name": "binCount", "update": "(bins.stop - bins.start) / bins.step"},
+            {"name": "nullGap", "value": 10},
+            {"name": "barStep", "update": "(width - nullGap) / (1 + binCount)"},
         ],
-        
         "data": [
             {
                 "name": "movies_table",
                 "url": "vegafusion+dataset://movies",
                 "transform": [
+                    {"type": "extent", "field": "IMDB Rating", "signal": "extent"},
                     {
-                        "type": "extent", 
-                        "field": "IMDB Rating",
-                        "signal": "extent"
-                    },
-                    {
-                        "type": "bin", 
+                        "type": "bin",
                         "signal": "bins",
-                        "field": "IMDB Rating", 
+                        "field": "IMDB Rating",
                         "extent": {"signal": "extent"},
-                        "maxbins": {"signal": "maxbins"}
-                    }
-                ]
+                        "maxbins": {"signal": "maxbins"},
+                    },
+                ],
             },
             {
                 "name": "rating_counts",
                 "source": "movies_table",
                 "transform": [
-                    {
-                        "type": "filter",
-                        "expr": "datum['IMDB Rating'] != null"
-                    },
-                    {
-                        "type": "aggregate",
-                        "groupby": ["bin0", "bin1"]
-                    }
-                ]
+                    {"type": "filter", "expr": "datum['IMDB Rating'] != null"},
+                    {"type": "aggregate", "groupby": ["bin0", "bin1"]},
+                ],
             },
             {
                 "name": "null_ratings",
-                "source": "movies_table", 
+                "source": "movies_table",
                 "transform": [
-                    {
-                        "type": "filter",
-                        "expr": "datum['IMDB Rating'] == null"
-                    },
-                    {
-                        "type": "aggregate",
-                        "groupby": []
-                    }
-                ]
+                    {"type": "filter", "expr": "datum['IMDB Rating'] == null"},
+                    {"type": "aggregate", "groupby": []},
+                ],
             },
             {
                 "name": "genre_summary",
                 "source": "movies_table",
                 "transform": [
-                    {
-                        "type": "filter",
-                        "expr": "datum['Major Genre'] != null"
-                    },
+                    {"type": "filter", "expr": "datum['Major Genre'] != null"},
                     {
                         "type": "aggregate",
                         "groupby": ["Major Genre"],
                         "fields": ["IMDB Rating", "Production Budget"],
                         "ops": ["mean", "mean"],
-                        "as": ["avg_rating", "avg_budget"]
+                        "as": ["avg_rating", "avg_budget"],
                     },
                     {
                         "type": "filter",
-                        "expr": "datum.count > 5"  # Only genres with more than 5 movies
-                    }
-                ]
-            }
+                        "expr": "datum.count > 5",  # Only genres with more than 5 movies
+                    },
+                ],
+            },
         ],
-        
         "scales": [
             {
                 "name": "yscale",
                 "type": "linear",
                 "range": "height",
-                "round": True, 
+                "round": True,
                 "nice": True,
                 "domain": {
                     "fields": [
                         {"data": "rating_counts", "field": "count"},
-                        {"data": "null_ratings", "field": "count"}
+                        {"data": "null_ratings", "field": "count"},
                     ]
-                }
+                },
             },
             {
                 "name": "xscale",
@@ -307,38 +276,32 @@ def get_spec() -> dict[str, Any]:
                 "range": [{"signal": "barStep + nullGap"}, {"signal": "width"}],
                 "round": True,
                 "domain": {"signal": "[bins.start, bins.stop]"},
-                "bins": {"signal": "bins"}
+                "bins": {"signal": "bins"},
             },
             {
                 "name": "xscale-null",
                 "type": "band",
                 "range": [0, {"signal": "barStep"}],
                 "round": True,
-                "domain": [None]
-            }
+                "domain": [None],
+            },
         ],
-        
         "axes": [
             {
-                "orient": "bottom", 
-                "scale": "xscale", 
+                "orient": "bottom",
+                "scale": "xscale",
                 "title": "IMDB Rating",
-                "tickMinStep": 0.5
+                "tickMinStep": 0.5,
             },
+            {"orient": "bottom", "scale": "xscale-null", "title": "Null Values"},
             {
-                "orient": "bottom", 
-                "scale": "xscale-null",
-                "title": "Null Values"
-            },
-            {
-                "orient": "left", 
-                "scale": "yscale", 
+                "orient": "left",
+                "scale": "yscale",
                 "title": "Number of Movies",
-                "tickCount": 5, 
-                "offset": 5
-            }
+                "tickCount": 5,
+                "offset": 5,
+            },
         ],
-        
         "marks": [
             {
                 "type": "rect",
@@ -351,12 +314,10 @@ def get_spec() -> dict[str, Any]:
                         "y2": {"scale": "yscale", "value": 0},
                         "fill": {"value": "steelblue"},
                         "stroke": {"value": "white"},
-                        "strokeWidth": {"value": 1}
+                        "strokeWidth": {"value": 1},
                     },
-                    "hover": {
-                        "fill": {"value": "firebrick"}
-                    }
-                }
+                    "hover": {"fill": {"value": "firebrick"}},
+                },
             },
             {
                 "type": "rect",
@@ -369,14 +330,12 @@ def get_spec() -> dict[str, Any]:
                         "y2": {"scale": "yscale", "value": 0},
                         "fill": {"value": "#aaa"},
                         "stroke": {"value": "white"},
-                        "strokeWidth": {"value": 1}
+                        "strokeWidth": {"value": 1},
                     },
-                    "hover": {
-                        "fill": {"value": "firebrick"}
-                    }
-                }
-            }
-        ]
+                    "hover": {"fill": {"value": "firebrick"}},
+                },
+            },
+        ],
     }
 
 

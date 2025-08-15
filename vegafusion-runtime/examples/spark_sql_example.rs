@@ -23,11 +23,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Including spaces, reserved SQL words, and special characters
     let schema = Arc::new(Schema::new(vec![
         Field::new("customer name", DataType::Utf8, false), // Space in name
-        Field::new("select", DataType::Float32, false), // Reserved SQL word
+        Field::new("select", DataType::Float32, false),     // Reserved SQL word
         Field::new("customer-email", DataType::Utf8, true), // Hyphen in name
-        Field::new("from", DataType::Utf8, true), // Reserved SQL word
-        Field::new("order date", DataType::Timestamp(TimeUnit::Millisecond, None), false), // Space in name
-        Field::new("where", DataType::Int32, true), // Reserved SQL word
+        Field::new("from", DataType::Utf8, true),           // Reserved SQL word
+        Field::new(
+            "order date",
+            DataType::Timestamp(TimeUnit::Millisecond, None),
+            false,
+        ), // Space in name
+        Field::new("where", DataType::Int32, true),         // Reserved SQL word
         Field::new("Total Amount", DataType::Float64, false), // Space and capital letters
     ]));
 
@@ -53,13 +57,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Demonstrate selecting columns with spaces and reserved SQL words
     // These will be properly escaped in the generated Spark SQL
-    let selected_df = df.select(vec![
-        col("customer name").alias("customer_name_clean"), // Column with space
-    ])?.select(vec![
-        col("customer_name_clean").alias("customer name with spaces"),
-        col("customer_name_clean").alias("customer name with spaces2"),
-        col("customer_name_clean").alias("customer name with spaces3"),
-    ])?;
+    let selected_df = df
+        .select(vec![
+            col("customer name").alias("customer_name_clean"), // Column with space
+        ])?
+        .select(vec![
+            col("customer_name_clean").alias("customer name with spaces"),
+            col("customer_name_clean").alias("customer name with spaces2"),
+            col("customer_name_clean").alias("customer name with spaces3"),
+        ])?;
 
     let plan = selected_df.logical_plan().clone();
 
