@@ -1,19 +1,3 @@
-"""
-VegaFusion pre_transform_spec_vendor Example with Apache Spark
-
-This example demonstrates how to use the `pre_transform_spec_vendor` method
-to pre-transform a Vega specification using Apache Spark as the execution engine.
-
-The example:
-1. Downloads movie data from the Vega datasets repository
-2. Sets up a local Spark session
-3. Creates a Spark DataFrame and registers it as a temporary table
-4. Extracts the Arrow schema from the data (for planning purposes)
-5. Uses pre_transform_spec_vendor with the schema to generate Spark SQL
-6. Executes the generated SQL queries using the Spark executor
-7. Returns the transformed specification with pre-computed data
-"""
-
 import pandas as pd
 import pyarrow as pa
 from typing import Any
@@ -39,10 +23,8 @@ def create_spark_executor(spark_session: SparkSession):
         print(f"   {sql_query}")
         print("-" * 60)
 
-        # Execute the SQL query
         spark_df = spark_session.sql(sql_query)
 
-        # Convert to Pandas, then to Arrow
         pandas_df = spark_df.toPandas()
         print("Got response from Spark, rows:", len(pandas_df))
         arrow_table = pa.Table.from_pandas(pandas_df)
@@ -76,40 +58,28 @@ def load_and_register_movies_data(spark: SparkSession) -> pa.Schema:
     """Load movies data and register it as a Spark table."""
     print("📊 Loading movies data...")
 
-    # Load data using pandas from the Vega datasets repository
     movies_url = "https://raw.githubusercontent.com/vega/vega-datasets/refs/heads/main/data/movies.json"
     movies_df = pd.read_json(movies_url)
 
     print(f"✅ Loaded {len(movies_df)} movies")
     print(f"   Columns: {list(movies_df.columns)}")
 
-    # Fix data types to handle None values properly for PyArrow conversion
-    # Convert columns with mixed types to appropriate nullable types
     for col in movies_df.columns:
         if movies_df[col].dtype == "object":
-            # Check if column contains numeric data mixed with None
             non_null_values = movies_df[col].dropna()
             if len(non_null_values) > 0:
-                # Try to convert to numeric if possible
                 try:
                     pd.to_numeric(non_null_values, errors="raise")
-                    # If successful, convert the entire column to nullable numeric
                     movies_df[col] = pd.to_numeric(movies_df[col], errors="coerce")
                 except (ValueError, TypeError):
-                    # Keep as string type, but ensure consistent string representation
                     movies_df[col] = movies_df[col].astype("string")
 
-    # Create Spark DataFrame
     spark_df = spark.createDataFrame(movies_df)
 
-    # Register as temporary table
     spark_df.createOrReplaceTempView("movies")
     print("✅ Movies data registered as 'movies' table in Spark")
 
-    # Return Arrow schema instead of the full DataFrame
-    # Use the Spark DataFrame to get a consistent schema since Spark handles mixed types better
     arrow_schema = spark_df.schema.json()
-    # Convert Spark schema to Arrow schema via pandas
     pandas_df_clean = spark_df.toPandas()
     arrow_schema = pa.Schema.from_pandas(pandas_df_clean)
     return arrow_schema
@@ -124,17 +94,13 @@ def main():
     print("VegaFusion pre_transform_spec_vendor Example with Apache Spark")
     print("=" * 80)
 
-    # Setup Spark
     spark = setup_spark_session()
 
     try:
-        # Load and register data
         movies_schema = load_and_register_movies_data(spark)
 
-        # Create Spark executor
         spark_executor = create_spark_executor(spark)
 
-        # Get the Vega specification
         spec = get_spec()
 
         print("\n🔧 Running pre_transform_spec_vendor...")
@@ -142,8 +108,6 @@ def main():
         for field in movies_schema:
             print(f"     - {field.name}: {field.type}")
 
-        # Use pre_transform_spec_vendor with Spark executor
-        # Pass only the schema, not the full data
         transformed_spec, warnings = vf.runtime.pre_transform_spec_vendor(
             spec=spec,
             output_format="sparksql",
@@ -161,11 +125,9 @@ def main():
             for warning in warnings:
                 print(f"   - {warning['type']}: {warning['message']}")
 
-        # Print some info about the transformed spec
         print("\n📋 Transformed specification:")
         print(f"   Data sources: {len(transformed_spec.get('data', []))}")
 
-        # Show inline data info
         for data_source in transformed_spec.get("data", []):
             if "values" in data_source:
                 values = data_source["values"]
@@ -178,7 +140,6 @@ def main():
         print("\n🎯 Example completed successfully!")
 
     finally:
-        # Clean up
         print("\n🧹 Stopping Spark session...")
         spark.stop()
         print("✅ Cleanup completed")
@@ -251,7 +212,7 @@ def get_spec() -> dict[str, Any]:
                     },
                     {
                         "type": "filter",
-                        "expr": "datum.count > 5",  # Only genres with more than 5 movies
+                        "expr": "datum.count > 5",
                     },
                 ],
             },

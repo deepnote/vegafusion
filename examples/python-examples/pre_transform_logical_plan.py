@@ -6,8 +6,6 @@ from datafusion import SessionContext
 import pyarrow as pa
 
 
-# This example demonstrates how to use the `pre_transform_spec` method to create a new
-# spec with supported transforms pre-evaluated.
 def main():
     spec = get_spec()
     schema = pa.schema(
