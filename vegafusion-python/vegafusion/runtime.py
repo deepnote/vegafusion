@@ -48,9 +48,7 @@ class PlanExecutorProtocol(Protocol):
 # Type alias for plan executors
 PlanExecutor = Union[
     # Callable that takes logical plan JSON and returns Arrow table
-    Callable[
-        [str], "pa.Table"
-    ],
+    Callable[[str], "pa.Table"],
     PlanExecutorProtocol,  # Object with execute_plan method
 ]
 
@@ -209,6 +207,7 @@ class VegaFusionRuntime:
         cache_capacity: int = 64,
         memory_limit: int | None = None,
         worker_threads: int | None = None,
+        executor: PlanExecutor | None = None,
     ) -> None:
         """
         Initialize a VegaFusionRuntime.
@@ -217,12 +216,19 @@ class VegaFusionRuntime:
             cache_capacity: Cache capacity.
             memory_limit: Memory limit.
             worker_threads: Number of worker threads.
+            executor: Optional custom executor for logical plan execution.
+            Can be either:
+                - A callable that takes a logical plan JSON string and
+                returns a PyArrow Table
+                - An object with an execute_plan method that has the same signature
+                - None to use the default DataFusion executor
         """
         self._runtime = None
         self._grpc_url: str | None = None
         self._cache_capacity = cache_capacity
         self._memory_limit = memory_limit
         self._worker_threads = worker_threads
+        self._executor = executor
 
     @property
     def runtime(self) -> PyVegaFusionRuntime:
@@ -245,8 +251,35 @@ class VegaFusionRuntime:
                 self.cache_capacity,
                 self.memory_limit,
                 self.worker_threads,
+                self._executor,
             )
         return self._runtime
+
+    @classmethod
+    def new_vendor(
+        cls,
+        vendor: Literal["datafusion", "sparksql"],
+        executor: PlanExecutor | None = None,
+        cache_capacity: int = 64,
+        memory_limit: int | None = None,
+        worker_threads: int | None = None,
+    ) -> VegaFusionRuntime:
+        from vegafusion._vegafusion import PyVegaFusionRuntime
+
+        inst = cls(cache_capacity, memory_limit, worker_threads, executor=None)
+        if inst.memory_limit is None:
+            inst.memory_limit = get_virtual_memory() // 2
+        if inst.worker_threads is None:
+            inst.worker_threads = get_cpu_count()
+
+        inst._runtime = PyVegaFusionRuntime.new_embedded_vendor(
+            inst.cache_capacity,
+            inst.memory_limit,
+            inst.worker_threads,
+            vendor,
+            executor,
+        )
+        return inst
 
     def grpc_connect(self, url: str) -> None:
         """
@@ -382,7 +415,6 @@ class VegaFusionRuntime:
         inline_datasets: dict[str, Any] | None = None,
         keep_signals: list[Union[str, tuple[str, list[int]]]] | None = None,
         keep_datasets: list[Union[str, tuple[str, list[int]]]] | None = None,
-        executor: PlanExecutor | None = None,
     ) -> tuple[dict[str, Any], list[PreTransformWarning]]:
         """
         Evaluate supported transforms in an input Vega specification
@@ -426,12 +458,6 @@ class VegaFusionRuntime:
                 * A two-element tuple where the first element is the name of a dataset
                   as a string and the second element is the nested scope of the dataset
                   as a list of integers
-            executor: A custom executor for logical plan execution. Can be either:
-
-                * A callable that takes a logical plan JSON string and returns an
-                  Arrow table
-                * An object with an execute_plan method that has the same signature
-                * None to use the default DataFusion executor
 
         Returns:
             tuple[dict[str, Any], list[PreTransformWarning]]:
@@ -464,107 +490,6 @@ class VegaFusionRuntime:
             inline_datasets=imported_inline_dataset,
             keep_signals=parse_variables(keep_signals),
             keep_datasets=parse_variables(keep_datasets),
-            executor=executor,
-        )
-
-        return new_spec, warnings
-
-    def pre_transform_spec_vendor(
-        self,
-        spec: Union[dict[str, Any], str],
-        output_format: str,
-        executor: PlanExecutor,
-        local_tz: str | None = None,
-        default_input_tz: str | None = None,
-        row_limit: int | None = None,
-        preserve_interactivity: bool = True,
-        inline_datasets: dict[str, Any] | None = None,
-        keep_signals: list[Union[str, tuple[str, list[int]]]] | None = None,
-        keep_datasets: list[Union[str, tuple[str, list[int]]]] | None = None,
-    ) -> tuple[dict[str, Any], list[PreTransformWarning]]:
-        """
-        Evaluate supported transforms in an input Vega specification
-        with vendor-specific execution.
-
-        This method extends pre_transform_spec by providing
-        vendor-specific SQL generation capabilities. Currently
-        supports SparkSQL output format.
-
-        Args:
-            spec: A Vega specification dict or JSON string
-            output_format: Target SQL dialect. Currently supported: "sparksql"
-            local_tz: Name of timezone to be considered local. E.g. 'America/New_York'.
-                Defaults to the value of vf.get_local_tz(), which defaults to the system
-                timezone if one can be determined.
-            executor: A custom executor for SQL execution, required. Can be either:
-                * A callable that takes a SQL string and returns an Arrow table
-                * An object with an execute_plan method that has the same signature
-            default_input_tz: Name of timezone (e.g. 'America/New_York') that naive
-                datetime strings should be interpreted in. Defaults to `local_tz`.
-            row_limit: Maximum number of dataset rows to include in the returned
-                specification. If exceeded, datasets will be truncated to this number
-                of rows and a RowLimitExceeded warning will be included in the
-                resulting warnings list
-            preserve_interactivity: If True (default) then the interactive behavior of
-                the chart will be preserved. This requires that all the data that
-                participates in interactions be included in the resulting spec rather
-                than being pre-transformed. If False, then all possible data
-                transformations are applied even if they break the original interactive
-                behavior of the chart.
-            inline_datasets: A dict from dataset names to pandas DataFrames, pyarrow
-                Tables, or pyarrow Schemas. Inline datasets may be referenced by the
-                input specification using the following url syntax
-                'vegafusion+dataset://{dataset_name}' or 'table://{dataset_name}'.
-            keep_signals: Signals from the input spec that must be included in the
-                pre-transformed spec, even if they are no longer referenced.
-                A list with elements that are either:
-
-                * The name of a top-level signal as a string
-                * A two-element tuple where the first element is the name of a signal
-                  as a string and the second element is the nested scope of the dataset
-                  as a list of integers
-            keep_datasets: Datasets from the input spec that must be included in the
-                pre-transformed spec even if they are no longer referenced.
-                A list with elements that are either:
-
-                * The name of a top-level dataset as a string
-                * A two-element tuple where the first element is the name of a dataset
-                  as a string and the second element is the nested scope of the dataset
-                  as a list of integers
-
-        Returns:
-            tuple[dict[str, Any], list[PreTransformWarning]]:
-            Two-element tuple of
-
-            * The Vega specification as a dict with pre-transformed datasets
-              included inline
-            * A list of warnings as dictionaries. Each warning dict has a ``'type'``
-              key indicating the warning type, and a ``'message'`` key containing
-              a description of the warning. Potential warning types include:
-
-              * ``'RowLimitExceeded'``: Some datasets in resulting Vega specification
-                have been truncated to the provided row limit
-              * ``'BrokenInteractivity'``: Some interactive features may have been
-                broken in the resulting Vega specification
-              * ``'Unsupported'``: No transforms in the provided Vega specification
-                were eligible for pre-transforming
-        """
-        local_tz = local_tz or get_local_tz()
-        imported_inline_dataset = self._import_inline_datasets(
-            inline_datasets, get_inline_column_usage(spec)
-        )
-
-        new_spec, warnings = self.runtime.pre_transform_spec_vendor(
-            spec,
-            output_format,
-            local_tz,
-            executor,
-            default_input_tz=default_input_tz,
-            row_limit=row_limit,
-            preserve_interactivity=preserve_interactivity,
-            inline_datasets=imported_inline_dataset,
-            keep_signals=parse_variables(keep_signals),
-            keep_datasets=parse_variables(keep_datasets),
         )
 
         return new_spec, warnings
@@ -576,7 +501,6 @@ class VegaFusionRuntime:
         default_input_tz: str | None = None,
         row_limit: int | None = None,
         inline_datasets: dict[str, DataFrameLike] | None = None,
-        executor: PlanExecutor | None = None,
     ) -> ChartState:
         """
         Construct new ChartState object.
@@ -596,13 +520,6 @@ class VegaFusionRuntime:
                 Tables, or pyarrow Schemas. Inline datasets may be referenced by the
                 input specification using the following url syntax
                 'vegafusion+dataset://{dataset_name}' or 'table://{dataset_name}'.
-            executor: A custom executor for logical plan execution. Can be either:
-
-                * A callable that takes a logical plan JSON string and returns an
-                  Arrow table
-                * An object with an execute_plan method that has the same signature
-                * None to use the default DataFusion executor
-
         Returns:
             ChartState
         """
@@ -617,7 +534,6 @@ class VegaFusionRuntime:
                 default_input_tz,
                 row_limit,
                 inline_arrow_dataset,
-                executor,
             )
         )
 
@@ -786,7 +702,6 @@ class VegaFusionRuntime:
         inline_datasets: dict[str, DataFrameLike] | None = None,
         keep_signals: list[str | tuple[str, list[int]]] | None = None,
         keep_datasets: list[str | tuple[str, list[int]]] | None = None,
-        executor: PlanExecutor | None = None,
     ) -> tuple[
         dict[str, Any], list[tuple[str, list[int], pa.Table]], list[PreTransformWarning]
     ]:
@@ -838,12 +753,6 @@ class VegaFusionRuntime:
                 * A two-element tuple where the first element is the name of a dataset
                   as a string and the second element is the nested scope of the dataset
                   as a list of integers
-            executor: A custom executor for logical plan execution. Can be either:
-
-                * A callable that takes a logical plan JSON string and returns an
-                  Arrow table
-                * An object with an execute_plan method that has the same signature
-                * None to use the default DataFusion executor
 
         Returns:
             tuple[dict[str, Any], list[tuple[str, list[int], pa.Table]], list[PreTransformWarning]]:
@@ -882,7 +791,6 @@ class VegaFusionRuntime:
             inline_datasets=inline_arrow_dataset,
             keep_signals=keep_signals,
             keep_datasets=keep_datasets,
-            executor=executor,
         )
 
         return new_spec, datasets, warnings

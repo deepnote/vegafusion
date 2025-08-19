@@ -26,7 +26,7 @@ mod tests {
         let spec: ChartSpec = serde_json::from_str(&spec_str).unwrap();
 
         // Initialize task graph runtime
-        let runtime = VegaFusionRuntime::new(None);
+        let runtime = VegaFusionRuntime::new(None, None);
 
         let (tx_spec, warnings) = runtime
             .pre_transform_spec(
@@ -39,7 +39,6 @@ mod tests {
                     default_input_tz: None,
                     preserve_interactivity: true,
                 },
-                None,
             )
             .await
             .unwrap();
@@ -67,7 +66,6 @@ mod tests {
                     default_input_tz: None,
                     preserve_interactivity: true,
                 },
-                None,
             )
             .await
             .unwrap();
@@ -96,7 +94,6 @@ mod tests {
                     default_input_tz: None,
                     preserve_interactivity: true,
                 },
-                None,
             )
             .await;
 

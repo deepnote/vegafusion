@@ -1184,7 +1184,7 @@ mod test_pre_transform_inline {
         let vegajs_runtime = vegajs_runtime();
 
         // Initialize task graph runtime
-        let runtime = VegaFusionRuntime::new(None);
+        let runtime = VegaFusionRuntime::new(None, None);
 
         // Get timezone
         let local_tz = vegajs_runtime.nodejs_runtime.local_timezone().unwrap();
@@ -1210,7 +1210,7 @@ mod test_pre_transform_inline {
         };
 
         let response = runtime
-            .pre_transform_spec(&inline_spec, &inline_datasets, &opts, None)
+            .pre_transform_spec(&inline_spec, &inline_datasets, &opts)
             .await
             .unwrap();
 
@@ -1336,7 +1336,7 @@ async fn check_pre_transform_spec_from_files(spec_name: &str, tolerance: f64) {
     let vegajs_runtime = vegajs_runtime();
 
     // Initialize task graph runtime
-    let runtime = VegaFusionRuntime::new(None);
+    let runtime = VegaFusionRuntime::new(None, None);
 
     // Get timezone
     let local_tz = vegajs_runtime.nodejs_runtime.local_timezone().unwrap();
@@ -1351,7 +1351,7 @@ async fn check_pre_transform_spec_from_files(spec_name: &str, tolerance: f64) {
     };
 
     let (pre_transform_spec, _warnings) = runtime
-        .pre_transform_spec(&full_spec, &Default::default(), &opts, None)
+        .pre_transform_spec(&full_spec, &Default::default(), &opts)
         .await
         .unwrap();
 
@@ -1455,7 +1455,7 @@ async fn check_spec_sequence(
         .collect();
 
     // Initialize task graph runtime
-    let runtime = VegaFusionRuntime::new(None);
+    let runtime = VegaFusionRuntime::new(None, None);
 
     // Extract the initial values of all of the variables that should be sent from the
     // server to the client
@@ -1476,7 +1476,7 @@ async fn check_spec_sequence(
             .expect("Failed to get node value");
 
         let materialized_value = value
-            .to_materialized(runtime.default_executor.clone())
+            .to_materialized(runtime.plan_executor.clone())
             .await
             .unwrap();
         init.push(ExportUpdateJSON {

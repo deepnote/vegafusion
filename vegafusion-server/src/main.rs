@@ -55,7 +55,7 @@ impl VegaFusionRuntimeGrpc {
 
                 match self
                     .runtime
-                    .query_request(task_graph, indices.as_slice(), &inline_datasets, None)
+                    .query_request(task_graph, indices.as_slice(), &inline_datasets)
                     .await
                 {
                     Ok(response_values) => {
@@ -63,7 +63,7 @@ impl VegaFusionRuntimeGrpc {
                         let materialized_futures: Vec<_> = response_values
                             .into_iter()
                             .map(|named_value| {
-                                let executor = self.runtime.default_executor.clone();
+                                let executor = self.runtime.plan_executor.clone();
                                 async move {
                                     let materialized_value =
                                         named_value.value.to_materialized(executor).await?;
@@ -133,7 +133,7 @@ impl VegaFusionRuntimeGrpc {
         // Apply pre-transform spec
         let (transformed_spec, warnings) = self
             .runtime
-            .pre_transform_spec(&spec, &inline_datasets, &opts, None)
+            .pre_transform_spec(&spec, &inline_datasets, &opts)
             .await?;
 
         // Build result
@@ -165,7 +165,7 @@ impl VegaFusionRuntimeGrpc {
         let spec: ChartSpec = serde_json::from_str(&spec_string)?;
         let (spec, datasets, warnings) = self
             .runtime
-            .pre_transform_extract(&spec, &inline_datasets, &opts, None)
+            .pre_transform_extract(&spec, &inline_datasets, &opts)
             .await?;
 
         // Build Response
@@ -224,7 +224,7 @@ impl VegaFusionRuntimeGrpc {
 
         let (values, warnings) = self
             .runtime
-            .pre_transform_values(&spec, &variables, &inline_datasets, &opts, None)
+            .pre_transform_values(&spec, &variables, &inline_datasets, &opts)
             .await?;
 
         let response_values: Vec<_> = values
@@ -355,10 +355,10 @@ fn main() -> Result<(), VegaFusionError> {
         .build()
         .expect("Failed to create tokio runtime");
 
-    let tg_runtime = VegaFusionRuntime::new(Some(VegaFusionCache::new(
-        Some(args.capacity),
-        memory_limit,
-    )));
+    let tg_runtime = VegaFusionRuntime::new(
+        Some(VegaFusionCache::new(Some(args.capacity), memory_limit)),
+        None,
+    );
 
     tokio_runtime.block_on(async move {
         grpc_server(grpc_address, tg_runtime.clone(), args.web)

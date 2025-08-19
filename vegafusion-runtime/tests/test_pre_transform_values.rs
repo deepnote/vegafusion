@@ -39,7 +39,7 @@ mod tests {
         let spec: ChartSpec = serde_json::from_str(&spec_str).unwrap();
 
         // Initialize task graph runtime
-        let runtime = VegaFusionRuntime::new(None);
+        let runtime = VegaFusionRuntime::new(None, None);
 
         let (values, warnings) = runtime
             .pre_transform_values(
@@ -51,7 +51,6 @@ mod tests {
                     local_tz: "UTC".to_string(),
                     default_input_tz: None,
                 },
-                None,
             )
             .await
             .unwrap();
@@ -89,7 +88,7 @@ mod tests {
         let spec: ChartSpec = serde_json::from_str(&spec_str).unwrap();
 
         // Initialize task graph runtime
-        let runtime = VegaFusionRuntime::new(None);
+        let runtime = VegaFusionRuntime::new(None, None);
 
         let (values, warnings) = runtime
             .pre_transform_values(
@@ -101,7 +100,6 @@ mod tests {
                     local_tz: "UTC".to_string(),
                     default_input_tz: None,
                 },
-                None,
             )
             .await
             .unwrap();
@@ -139,7 +137,7 @@ mod tests {
         let spec: ChartSpec = serde_json::from_str(&spec_str).unwrap();
 
         // Initialize task graph runtime
-        let runtime = VegaFusionRuntime::new(None);
+        let runtime = VegaFusionRuntime::new(None, None);
 
         // Check existent but unsupported dataset name
         let result = runtime
@@ -152,7 +150,6 @@ mod tests {
                     local_tz: "UTC".to_string(),
                     default_input_tz: None,
                 },
-                None,
             )
             .await;
 
@@ -177,7 +174,6 @@ mod tests {
                     local_tz: "UTC".to_string(),
                     default_input_tz: None,
                 },
-                None,
             )
             .await;
 
@@ -199,7 +195,7 @@ mod tests {
         let spec: ChartSpec = serde_json::from_str(&spec_str).unwrap();
 
         // Initialize task graph runtime
-        let runtime = VegaFusionRuntime::new(None);
+        let runtime = VegaFusionRuntime::new(None, None);
 
         let source_0 =
             VegaFusionTable::from_json(&json!([{"normal": 1, "a.b": 2}, {"normal": 1, "a.b": 4}]))
@@ -221,7 +217,6 @@ mod tests {
                     local_tz: "UTC".to_string(),
                     default_input_tz: None,
                 },
-                None,
             )
             .await
             .unwrap();
@@ -256,7 +251,7 @@ mod tests {
         let spec: ChartSpec = serde_json::from_str(&spec_str).unwrap();
 
         // Initialize task graph runtime
-        let runtime = VegaFusionRuntime::new(None);
+        let runtime = VegaFusionRuntime::new(None, None);
 
         let (values, warnings) = runtime
             .pre_transform_values(
@@ -268,7 +263,6 @@ mod tests {
                     local_tz: "UTC".to_string(),
                     default_input_tz: None,
                 },
-                None,
             )
             .await
             .unwrap();
@@ -304,7 +298,7 @@ mod tests {
         let spec: ChartSpec = serde_json::from_str(&spec_str).unwrap();
 
         // Initialize task graph runtime
-        let runtime = VegaFusionRuntime::new(None);
+        let runtime = VegaFusionRuntime::new(None, None);
 
         let (values, warnings) = runtime
             .pre_transform_values(
@@ -319,7 +313,6 @@ mod tests {
                     local_tz: "UTC".to_string(),
                     default_input_tz: None,
                 },
-                None,
             )
             .await
             .unwrap();
@@ -389,7 +382,7 @@ mod tests {
             )));
 
             // Initialize task graph runtime
-            let runtime = VegaFusionRuntime::new(None);
+            let runtime = VegaFusionRuntime::new(None, None);
 
             let (values, warnings) = runtime
                 .pre_transform_values(
@@ -401,7 +394,6 @@ mod tests {
                         local_tz: "UTC".to_string(),
                         default_input_tz: None,
                     },
-                    None,
                 )
                 .await
                 .unwrap();
@@ -449,7 +441,7 @@ mod tests {
         .unwrap();
 
         // Initialize task graph runtime
-        let runtime = VegaFusionRuntime::new(None);
+        let runtime = VegaFusionRuntime::new(None, None);
 
         let (values, warnings) = runtime
             .pre_transform_values(
@@ -461,7 +453,6 @@ mod tests {
                     local_tz: "UTC".to_string(),
                     default_input_tz: None,
                 },
-                None,
             )
             .await
             .unwrap();

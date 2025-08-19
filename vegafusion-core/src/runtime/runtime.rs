@@ -33,6 +33,27 @@ use vegafusion_common::{
     error::{Result, ResultWithContext, VegaFusionError},
 };
 
+/// Materialize a list of export updates using the provided plan executor
+pub async fn materialize_export_updates_with_executor(
+    executor: Arc<dyn PlanExecutor>,
+    export_updates: Vec<ExportUpdate>,
+) -> Result<Vec<ExportUpdateArrow>> {
+    let mut result = Vec::new();
+    for export_update in export_updates {
+        let materialized_value = export_update
+            .value
+            .to_materialized(executor.clone())
+            .await?;
+        result.push(ExportUpdateArrow {
+            namespace: export_update.namespace,
+            name: export_update.name,
+            scope: export_update.scope,
+            value: materialized_value,
+        });
+    }
+    Ok(result)
+}
+
 #[derive(Clone, Debug)]
 pub struct PreTransformExtractTable {
     pub name: String,
@@ -49,31 +70,14 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
         task_graph: Arc<TaskGraph>,
         indices: &[NodeValueIndex],
         inline_datasets: &HashMap<String, VegaFusionDataset>,
-        plan_executor: Option<Arc<dyn PlanExecutor>>,
     ) -> Result<Vec<NamedTaskValue>>;
 
     async fn materialize_export_updates(
         &self,
         export_updates: Vec<ExportUpdate>,
-        plan_executor: Option<Arc<dyn PlanExecutor>>,
     ) -> Result<Vec<ExportUpdateArrow>> {
-        let noop_executor = Arc::new(NoOpPlanExecutor::default());
-        let executor = plan_executor.unwrap_or(noop_executor);
-
-        let mut result = Vec::new();
-        for export_update in export_updates {
-            let materialized_value = export_update
-                .value
-                .to_materialized(executor.clone())
-                .await?;
-            result.push(ExportUpdateArrow {
-                namespace: export_update.namespace,
-                name: export_update.name,
-                scope: export_update.scope,
-                value: materialized_value,
-            });
-        }
-        Ok(result)
+        let executor = Arc::new(NoOpPlanExecutor::default());
+        materialize_export_updates_with_executor(executor, export_updates).await
     }
 
     async fn pre_transform_spec_plan(
@@ -84,7 +88,6 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
         preserve_interactivity: bool,
         inline_datasets: &HashMap<String, VegaFusionDataset>,
         keep_variables: Vec<ScopedVariable>,
-        plan_executor: Option<Arc<dyn PlanExecutor>>,
     ) -> Result<(SpecPlan, Vec<ExportUpdate>)> {
         // Create spec plan
         let plan = SpecPlan::try_new(
@@ -122,7 +125,7 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
             .collect();
 
         let response_values = self
-            .query_request(task_graph.clone(), &indices, inline_datasets, plan_executor)
+            .query_request(task_graph.clone(), &indices, inline_datasets)
             .await
             .with_context(|| "Failed to query node values")?;
 
@@ -142,7 +145,6 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
         spec: &ChartSpec,
         inline_datasets: &HashMap<String, VegaFusionDataset>,
         options: &PreTransformSpecOpts,
-        plan_executor: Option<Arc<dyn PlanExecutor>>,
     ) -> Result<(ChartSpec, Vec<PreTransformSpecWarning>)> {
         let input_spec = spec;
 
@@ -160,13 +162,10 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
                 options.preserve_interactivity,
                 inline_datasets,
                 keep_variables,
-                plan_executor.clone(),
             )
             .await?;
 
-        let init_arrow = self
-            .materialize_export_updates(init, plan_executor.clone())
-            .await?;
+        let init_arrow = self.materialize_export_updates(init).await?;
 
         apply_pre_transform_datasets(input_spec, &plan, init_arrow, options.row_limit)
     }
@@ -176,7 +175,6 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
         spec: &ChartSpec,
         inline_datasets: &HashMap<String, VegaFusionDataset>,
         options: &PreTransformExtractOpts,
-        plan_executor: Option<Arc<dyn PlanExecutor>>,
     ) -> Result<(
         ChartSpec,
         Vec<PreTransformExtractTable>,
@@ -198,12 +196,9 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
                 options.preserve_interactivity,
                 inline_datasets,
                 keep_variables,
-                plan_executor.clone(),
             )
             .await?;
-        let init_arrow = self
-            .materialize_export_updates(init, plan_executor.clone())
-            .await?;
+        let init_arrow = self.materialize_export_updates(init).await?;
 
         // Update client spec with server values
         let mut spec = plan.client_spec.clone();
@@ -287,7 +282,6 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
         variables: &[ScopedVariable],
         inline_datasets: &HashMap<String, VegaFusionDataset>,
         options: &PreTransformValuesOpts,
-        plan_executor: Option<Arc<dyn PlanExecutor>>,
     ) -> Result<(Vec<TaskValue>, Vec<PreTransformValuesWarning>)> {
         // Check that requested variables exist and collect indices
         for var in variables {
@@ -386,12 +380,7 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
 
         // perform query
         let named_task_values = self
-            .query_request(
-                Arc::new(task_graph.clone()),
-                &indices,
-                inline_datasets,
-                plan_executor,
-            )
+            .query_request(Arc::new(task_graph.clone()), &indices, inline_datasets)
             .await?;
 
         // Collect values and handle row limit
@@ -435,7 +424,6 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
         spec: &ChartSpec,
         inline_datasets: HashMap<String, VegaFusionDataset>,
         options: &PreTransformLogicalPlanOpts,
-        plan_executor: Option<Arc<dyn PlanExecutor>>,
     ) -> Result<(
         ChartSpec,
         Vec<ExportUpdate>,
@@ -455,7 +443,6 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
                 options.preserve_interactivity,
                 &inline_datasets,
                 keep_variables,
-                plan_executor,
             )
             .await?;
 

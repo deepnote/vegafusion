@@ -102,10 +102,14 @@ def main():
         for field in movies_schema:
             print(f"     - {field.name}: {field.type}")
 
-        transformed_spec, warnings = vf.runtime.pre_transform_spec_vendor(
-            spec=spec,
-            output_format="sparksql",
+        # Build a vendor-specific runtime with the provided Spark executor
+        runtime = vf.VegaFusionRuntime.new_vendor(
+            vendor="sparksql",
             executor=spark_executor,
+        )
+
+        transformed_spec, warnings = runtime.pre_transform_spec(
+            spec=spec,
             local_tz="UTC",
             preserve_interactivity=False,
             inline_datasets={"movies": movies_schema},

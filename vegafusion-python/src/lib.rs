@@ -229,7 +229,6 @@ impl PyChartState {
         inline_datasets: HashMap<String, VegaFusionDataset>,
         tz_config: TzConfig,
         row_limit: Option<u32>,
-        executor: Option<Arc<dyn PlanExecutor>>,
     ) -> PyResult<Self> {
         let state = tokio_runtime.block_on(RsChartState::try_new(
             runtime.as_ref(),
@@ -239,7 +238,6 @@ impl PyChartState {
                 tz_config,
                 row_limit,
             },
-            executor,
         ))?;
         Ok(Self {
             runtime,
@@ -315,6 +313,69 @@ struct PyVegaFusionRuntime {
 }
 
 impl PyVegaFusionRuntime {
+    fn select_executor_for_vendor(
+        vendor: Option<String>,
+        executor: Option<PyObject>,
+    ) -> PyResult<Option<Arc<dyn PlanExecutor>>> {
+        match vendor.as_deref() {
+            Some("sparksql") => {
+                let py_exec = executor.ok_or_else(|| {
+                    PyValueError::new_err(
+                        "'executor' is required for vendor='sparksql' and must be callable or have execute_plan",
+                    )
+                })?;
+
+                Python::with_gil(|py| -> PyResult<()> {
+                    let obj_ref = py_exec.bind(py);
+                    if obj_ref.is_callable() || obj_ref.hasattr("execute_plan")? {
+                        Ok(())
+                    } else {
+                        Err(PyValueError::new_err(
+                            "Executor must be callable or have an execute_plan method",
+                        ))
+                    }
+                })?;
+
+                Ok(Some(Arc::new(SparkSqlPlanExecutor::new(py_exec))))
+            }
+            Some("datafusion") | Some("") | None => {
+                // Fall back to default DataFusion if no executor; otherwise wrap Python executor
+                python_object_to_executor(executor)
+            }
+            Some(other) => Err(PyValueError::new_err(format!(
+                "Unsupported vendor: '{}'. Supported vendors: 'datafusion', 'sparksql'",
+                other
+            ))),
+        }
+    }
+
+    fn build_with_executor(
+        max_capacity: Option<usize>,
+        memory_limit: Option<usize>,
+        worker_threads: Option<i32>,
+        rust_executor: Option<Arc<dyn PlanExecutor>>,
+    ) -> PyResult<Self> {
+        initialize_logging();
+
+        let mut builder = tokio::runtime::Builder::new_multi_thread();
+        if let Some(worker_threads) = worker_threads {
+            builder.worker_threads(worker_threads.max(1) as usize);
+        }
+
+        let tokio_runtime_connection = builder
+            .enable_all()
+            .thread_stack_size(TOKIO_THREAD_STACK_SIZE)
+            .build()
+            .external("Failed to create Tokio thread pool")?;
+
+        Ok(Self {
+            runtime: Arc::new(VegaFusionRuntime::new(
+                Some(VegaFusionCache::new(max_capacity, memory_limit)),
+                rust_executor,
+            )),
+            tokio_runtime: Arc::new(tokio_runtime_connection),
+        })
+    }
     fn process_inline_datasets(
         &self,
         inline_datasets: Option<&Bound<PyDict>>,
@@ -365,34 +426,28 @@ impl PyVegaFusionRuntime {
 #[pymethods]
 impl PyVegaFusionRuntime {
     #[staticmethod]
-    #[pyo3(signature = (max_capacity=None, memory_limit=None, worker_threads=None))]
+    #[pyo3(signature = (max_capacity=None, memory_limit=None, worker_threads=None, executor=None))]
     pub fn new_embedded(
         max_capacity: Option<usize>,
         memory_limit: Option<usize>,
         worker_threads: Option<i32>,
+        executor: Option<PyObject>,
     ) -> PyResult<Self> {
-        initialize_logging();
+        let rust_executor = Self::select_executor_for_vendor(None, executor)?;
+        Self::build_with_executor(max_capacity, memory_limit, worker_threads, rust_executor)
+    }
 
-        // Use DataFusion connection and multi-threaded tokio runtime
-        let mut builder = tokio::runtime::Builder::new_multi_thread();
-        if let Some(worker_threads) = worker_threads {
-            builder.worker_threads(worker_threads.max(1) as usize);
-        }
-
-        // Build the tokio runtime
-        let tokio_runtime_connection = builder
-            .enable_all()
-            .thread_stack_size(TOKIO_THREAD_STACK_SIZE)
-            .build()
-            .external("Failed to create Tokio thread pool")?;
-
-        Ok(Self {
-            runtime: Arc::new(VegaFusionRuntime::new(Some(VegaFusionCache::new(
-                max_capacity,
-                memory_limit,
-            )))),
-            tokio_runtime: Arc::new(tokio_runtime_connection),
-        })
+    #[staticmethod]
+    #[pyo3(signature = (max_capacity=None, memory_limit=None, worker_threads=None, vendor=None, executor=None))]
+    pub fn new_embedded_vendor(
+        max_capacity: Option<usize>,
+        memory_limit: Option<usize>,
+        worker_threads: Option<i32>,
+        vendor: Option<String>,
+        executor: Option<PyObject>,
+    ) -> PyResult<Self> {
+        let rust_executor = Self::select_executor_for_vendor(vendor, executor)?;
+        Self::build_with_executor(max_capacity, memory_limit, worker_threads, rust_executor)
     }
 
     #[staticmethod]
@@ -420,7 +475,7 @@ impl PyVegaFusionRuntime {
         })
     }
 
-    #[pyo3(signature = (spec, local_tz, default_input_tz=None, row_limit=None, inline_datasets=None, executor=None))]
+    #[pyo3(signature = (spec, local_tz, default_input_tz=None, row_limit=None, inline_datasets=None))]
     pub fn new_chart_state(
         &self,
         py: Python,
@@ -429,7 +484,6 @@ impl PyVegaFusionRuntime {
         default_input_tz: Option<String>,
         row_limit: Option<u32>,
         inline_datasets: Option<&Bound<PyDict>>,
-        executor: Option<PyObject>,
     ) -> PyResult<PyChartState> {
         let spec = parse_json_spec(spec)?;
         let tz_config = TzConfig {
@@ -438,7 +492,6 @@ impl PyVegaFusionRuntime {
         };
 
         let inline_datasets = self.process_inline_datasets(inline_datasets)?;
-        let rust_executor = python_object_to_executor(executor)?;
 
         py.allow_threads(|| {
             PyChartState::try_new(
@@ -448,13 +501,12 @@ impl PyVegaFusionRuntime {
                 inline_datasets,
                 tz_config,
                 row_limit,
-                rust_executor,
             )
         })
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (spec, local_tz, default_input_tz=None, row_limit=None, preserve_interactivity=None, inline_datasets=None, keep_signals=None, keep_datasets=None, executor=None))]
+    #[pyo3(signature = (spec, local_tz, default_input_tz=None, row_limit=None, preserve_interactivity=None, inline_datasets=None, keep_signals=None, keep_datasets=None))]
     pub fn pre_transform_spec(
         &self,
         py: Python,
@@ -466,7 +518,6 @@ impl PyVegaFusionRuntime {
         inline_datasets: Option<&Bound<PyDict>>,
         keep_signals: Option<Vec<(String, Vec<u32>)>>,
         keep_datasets: Option<Vec<(String, Vec<u32>)>>,
-        executor: Option<PyObject>,
     ) -> PyResult<(PyObject, PyObject)> {
         let inline_datasets = self.process_inline_datasets(inline_datasets)?;
 
@@ -481,8 +532,6 @@ impl PyVegaFusionRuntime {
         for (name, scope) in keep_datasets.unwrap_or_default() {
             keep_variables.push((Variable::new_data(&name), scope))
         }
-
-        let rust_executor = python_object_to_executor(executor)?;
 
         let (spec, warnings) = py.allow_threads(|| {
             self.tokio_runtime.block_on(
@@ -502,95 +551,6 @@ impl PyVegaFusionRuntime {
                             })
                             .collect(),
                     },
-                    rust_executor,
-                ),
-            )
-        })?;
-
-        let warnings: Vec<_> = warnings
-            .iter()
-            .map(PreTransformSpecWarningSpec::from)
-            .collect();
-
-        Python::with_gil(|py| -> PyResult<(PyObject, PyObject)> {
-            let py_spec = pythonize::pythonize(py, &spec)?;
-            let py_warnings = pythonize::pythonize(py, &warnings)?;
-            Ok((py_spec.into(), py_warnings.into()))
-        })
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (spec, output_format, local_tz, executor, default_input_tz=None, row_limit=None, preserve_interactivity=None, inline_datasets=None, keep_signals=None, keep_datasets=None))]
-    pub fn pre_transform_spec_vendor(
-        &self,
-        py: Python,
-        spec: PyObject,
-        output_format: String,
-        local_tz: String,
-        executor: PyObject,
-        default_input_tz: Option<String>,
-        row_limit: Option<u32>,
-        preserve_interactivity: Option<bool>,
-        inline_datasets: Option<&Bound<PyDict>>,
-        keep_signals: Option<Vec<(String, Vec<u32>)>>,
-        keep_datasets: Option<Vec<(String, Vec<u32>)>>,
-    ) -> PyResult<(PyObject, PyObject)> {
-        // Check output format - only sparksql is supported for now
-        if output_format != "sparksql" {
-            return Err(PyValueError::new_err(format!(
-                "Unsupported output format: '{}'. Currently only 'sparksql' is supported.",
-                output_format
-            )));
-        }
-
-        // Validate executor
-        Python::with_gil(|py| -> PyResult<()> {
-            let obj_ref = executor.bind(py);
-            if !obj_ref.is_callable() && !obj_ref.hasattr("execute_plan")? {
-                return Err(PyValueError::new_err(
-                    "Executor must be callable or have an execute_plan method",
-                ));
-            }
-            Ok(())
-        })?;
-
-        // Create SparkSQL middleware executor
-        let spark_executor = Arc::new(SparkSqlPlanExecutor::new(executor));
-
-        // Process inline datasets
-        let inline_datasets = self.process_inline_datasets(inline_datasets)?;
-        let spec = parse_json_spec(spec)?;
-        let preserve_interactivity = preserve_interactivity.unwrap_or(false);
-
-        // Build keep_variables
-        let mut keep_variables: Vec<ScopedVariable> = Vec::new();
-        for (name, scope) in keep_signals.unwrap_or_default() {
-            keep_variables.push((Variable::new_signal(&name), scope))
-        }
-        for (name, scope) in keep_datasets.unwrap_or_default() {
-            keep_variables.push((Variable::new_data(&name), scope))
-        }
-
-        // Call the original pre_transform_spec with the SparkSQL executor
-        let (spec, warnings) = py.allow_threads(|| {
-            self.tokio_runtime.block_on(
-                self.runtime.pre_transform_spec(
-                    &spec,
-                    &inline_datasets,
-                    &PreTransformSpecOpts {
-                        local_tz,
-                        default_input_tz,
-                        row_limit,
-                        preserve_interactivity,
-                        keep_variables: keep_variables
-                            .into_iter()
-                            .map(|v| PreTransformVariable {
-                                variable: Some(v.0),
-                                scope: v.1,
-                            })
-                            .collect(),
-                    },
-                    Some(spark_executor),
                 ),
             )
         })?;
@@ -643,7 +603,6 @@ impl PyVegaFusionRuntime {
                         default_input_tz,
                         row_limit,
                     },
-                    None,
                 ))
         })?;
 
@@ -680,7 +639,7 @@ impl PyVegaFusionRuntime {
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (spec, local_tz, default_input_tz=None, preserve_interactivity=None, extract_threshold=None, extracted_format=None, inline_datasets=None, keep_signals=None, keep_datasets=None, executor=None))]
+    #[pyo3(signature = (spec, local_tz, default_input_tz=None, preserve_interactivity=None, extract_threshold=None, extracted_format=None, inline_datasets=None, keep_signals=None, keep_datasets=None))]
     pub fn pre_transform_extract(
         &self,
         py: Python,
@@ -693,7 +652,6 @@ impl PyVegaFusionRuntime {
         inline_datasets: Option<&Bound<PyDict>>,
         keep_signals: Option<Vec<(String, Vec<u32>)>>,
         keep_datasets: Option<Vec<(String, Vec<u32>)>>,
-        executor: Option<PyObject>,
     ) -> PyResult<(PyObject, Vec<PyObject>, PyObject)> {
         let inline_datasets = self.process_inline_datasets(inline_datasets)?;
         let spec = parse_json_spec(spec)?;
@@ -716,8 +674,6 @@ impl PyVegaFusionRuntime {
             });
         }
 
-        let rust_executor = python_object_to_executor(executor)?;
-
         let (tx_spec, datasets, warnings) = py.allow_threads(|| {
             self.tokio_runtime
                 .block_on(self.runtime.pre_transform_extract(
@@ -730,7 +686,6 @@ impl PyVegaFusionRuntime {
                         extract_threshold: extract_threshold as i32,
                         keep_variables,
                     },
-                    rust_executor,
                 ))
         })?;
 
@@ -825,7 +780,6 @@ impl PyVegaFusionRuntime {
                         preserve_interactivity,
                         keep_variables,
                     },
-                    None,
                 ))
         })?;
 

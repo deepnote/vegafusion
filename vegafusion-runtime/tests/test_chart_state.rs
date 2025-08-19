@@ -25,7 +25,7 @@ mod tests {
         let spec: ChartSpec = serde_json::from_str(&spec_str).unwrap();
 
         // Initialize task graph runtime
-        let runtime = VegaFusionRuntime::new(None);
+        let runtime = VegaFusionRuntime::new(None, None);
 
         let chart_state = ChartState::try_new(
             &runtime,
@@ -38,7 +38,6 @@ mod tests {
                 },
                 row_limit: None,
             },
-            None,
         )
         .await
         .unwrap();

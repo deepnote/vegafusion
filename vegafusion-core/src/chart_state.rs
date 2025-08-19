@@ -10,7 +10,7 @@ use crate::{
         pretransform::PreTransformSpecWarning,
         tasks::{NodeValueIndex, TaskGraph, TzConfig, Variable, VariableNamespace},
     },
-    runtime::{PlanExecutor, VegaFusionRuntimeTrait},
+    runtime::VegaFusionRuntimeTrait,
     spec::chart::ChartSpec,
     task_graph::{graph::ScopedVariable, task_value::TaskValue},
 };
@@ -60,7 +60,6 @@ impl ChartState {
         spec: ChartSpec,
         inline_datasets: HashMap<String, VegaFusionDataset>,
         opts: ChartStateOpts,
-        plan_executor: Option<Arc<dyn PlanExecutor>>,
     ) -> Result<Self> {
         let dataset_fingerprints = inline_datasets
             .iter()
@@ -96,12 +95,7 @@ impl ChartState {
             .collect();
 
         let response_task_values = runtime
-            .query_request(
-                Arc::new(task_graph.clone()),
-                &indices,
-                &inline_datasets,
-                plan_executor.clone(),
-            )
+            .query_request(Arc::new(task_graph.clone()), &indices, &inline_datasets)
             .await?;
 
         let mut init = Vec::new();
@@ -118,9 +112,7 @@ impl ChartState {
             });
         }
 
-        let init_arrow = runtime
-            .materialize_export_updates(init, plan_executor.clone())
-            .await?;
+        let init_arrow = runtime.materialize_export_updates(init).await?;
 
         let (transformed_spec, warnings) =
             apply_pre_transform_datasets(&spec, &plan, init_arrow, opts.row_limit)?;
@@ -194,7 +186,6 @@ impl ChartState {
                 Arc::new(cloned_task_graph),
                 indices.as_slice(),
                 &self.inline_datasets,
-                None, // TODO: should this be None? Not sure how chart state work across different envs
             )
             .await?;
 

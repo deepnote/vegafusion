@@ -26,7 +26,7 @@ mod tests {
         let spec: ChartSpec = serde_json::from_str(&spec_str).unwrap();
 
         // Initialize task graph runtime
-        let runtime = VegaFusionRuntime::new(None);
+        let runtime = VegaFusionRuntime::new(None, None);
 
         let (tx_spec, datasets, warnings) = runtime
             .pre_transform_extract(
@@ -39,7 +39,6 @@ mod tests {
                     local_tz: "UTC".to_string(),
                     default_input_tz: None,
                 },
-                None,
             )
             .await
             .unwrap();

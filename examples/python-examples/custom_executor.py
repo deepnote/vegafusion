@@ -42,12 +42,16 @@ def main():
 
     print("Testing custom executor with VegaFusion...")
 
+    # Create a DataFusion runtime that uses a custom Python executor
+    runtime = vf.VegaFusionRuntime(
+        executor=simple_logging_executor,
+    )
+
     try:
-        vf.runtime.pre_transform_spec(
+        runtime.pre_transform_spec(
             spec=spec,
             local_tz="UTC",
             inline_datasets={"movies": schema},
-            executor=simple_logging_executor,
         )
     except ValueError as e:
         print(f"✅ Expected error caught: {e}")

@@ -23,8 +23,8 @@ use vegafusion_core::proto::gen::tasks::inline_dataset::Dataset;
 use vegafusion_core::proto::gen::tasks::{
     task::TaskKind, InlineDataset, InlineDatasetTable, NodeValueIndex, TaskGraph,
 };
-use vegafusion_core::runtime::PlanExecutor;
 use vegafusion_core::runtime::VegaFusionRuntimeTrait;
+use vegafusion_core::runtime::{materialize_export_updates_with_executor, PlanExecutor};
 use vegafusion_core::task_graph::task_value::{NamedTaskValue, TaskValue};
 
 #[cfg(feature = "proto")]
@@ -39,15 +39,20 @@ type CacheValue = (TaskValue, Vec<TaskValue>);
 pub struct VegaFusionRuntime {
     pub cache: VegaFusionCache,
     pub ctx: Arc<SessionContext>,
-    pub default_executor: Arc<dyn PlanExecutor>,
+    pub plan_executor: Arc<dyn PlanExecutor>,
 }
 
 impl VegaFusionRuntime {
-    pub fn new(cache: Option<VegaFusionCache>) -> Self {
+    pub fn new(
+        cache: Option<VegaFusionCache>,
+        plan_executor: Option<Arc<dyn PlanExecutor>>,
+    ) -> Self {
         let ctx = Arc::new(make_datafusion_context());
+        let plan_executor =
+            plan_executor.unwrap_or_else(|| Arc::new(DataFusionPlanExecutor::new(ctx.clone())));
         Self {
             cache: cache.unwrap_or_else(|| VegaFusionCache::new(Some(32), None)),
-            default_executor: Arc::new(DataFusionPlanExecutor::new(ctx.clone())),
+            plan_executor,
             ctx,
         }
     }
@@ -61,7 +66,7 @@ impl VegaFusionRuntime {
     ) -> Result<TaskValue> {
         // We shouldn't panic inside get_or_compute_node_value, but since this may be used
         // in a server context, wrap in catch_unwind just in case.
-        let executor = plan_executor.unwrap_or_else(|| self.default_executor.clone());
+        let executor = plan_executor.unwrap_or_else(|| self.plan_executor.clone());
         let node_value = AssertUnwindSafe(get_or_compute_node_value(
             task_graph,
             node_value_index.node_index as usize,
@@ -99,7 +104,6 @@ impl VegaFusionRuntimeTrait for VegaFusionRuntime {
         task_graph: Arc<TaskGraph>,
         indices: &[NodeValueIndex],
         inline_datasets: &HashMap<String, VegaFusionDataset>,
-        plan_executor: Option<Arc<dyn PlanExecutor>>,
     ) -> Result<Vec<NamedTaskValue>> {
         // Clone task_graph and task_graph_runtime for use in closure
         let task_graph_runtime = self.clone();
@@ -127,7 +131,7 @@ impl VegaFusionRuntimeTrait for VegaFusionRuntime {
                 // Clone task_graph and task_graph_runtime for use in closure
                 let task_graph_runtime = task_graph_runtime.clone();
                 let task_graph = task_graph.clone();
-                let plan_executor_clone = plan_executor.clone();
+                let plan_executor_clone = self.plan_executor.clone();
 
                 Ok(async move {
                     let value = task_graph_runtime
@@ -136,7 +140,7 @@ impl VegaFusionRuntimeTrait for VegaFusionRuntime {
                             task_graph,
                             node_value_index,
                             inline_datasets.clone(),
-                            plan_executor_clone,
+                            Some(plan_executor_clone),
                         )
                         .await?;
 
@@ -155,26 +159,10 @@ impl VegaFusionRuntimeTrait for VegaFusionRuntime {
     async fn materialize_export_updates(
         &self,
         export_updates: Vec<ExportUpdate>,
-        plan_executor: Option<Arc<dyn PlanExecutor>>,
     ) -> Result<Vec<ExportUpdateArrow>> {
-        // TODO: should we remove this implementation in favor of one from the trait?
-        let executor = plan_executor.unwrap_or_else(|| self.default_executor.clone());
+        let executor = self.plan_executor.clone();
 
-        let mut results = Vec::new();
-        for export_update in export_updates {
-            let materialized_value = export_update
-                .value
-                .to_materialized(executor.clone())
-                .await?;
-            results.push(ExportUpdateArrow {
-                namespace: export_update.namespace,
-                name: export_update.name,
-                scope: export_update.scope,
-                value: materialized_value,
-            });
-        }
-
-        Ok(results)
+        materialize_export_updates_with_executor(executor, export_updates).await
     }
 
     fn create_dataset_from_schema(

@@ -86,7 +86,7 @@ mod test_stringify_datetimes {
         let spec: ChartSpec = serde_json::from_str(&spec_str).unwrap();
 
         // Initialize task graph runtime
-        let runtime = VegaFusionRuntime::new(None);
+        let runtime = VegaFusionRuntime::new(None, None);
         let local_tz = local_tz.to_string();
 
         let (spec, _warnings) = runtime
@@ -100,7 +100,6 @@ mod test_stringify_datetimes {
                     row_limit: None,
                     preserve_interactivity: true,
                 },
-                None,
             )
             .await
             .unwrap();
@@ -140,7 +139,7 @@ mod test_stringify_datetimes {
         let spec: ChartSpec = serde_json::from_str(&spec_str).unwrap();
 
         // Initialize task graph runtime
-        let runtime = VegaFusionRuntime::new(None);
+        let runtime = VegaFusionRuntime::new(None, None);
         // let local_tz = "America/New_York".to_string();
         let local_tz = "UTC".to_string();
         let default_input_tz = "UTC".to_string();
@@ -156,7 +155,6 @@ mod test_stringify_datetimes {
                     row_limit: None,
                     preserve_interactivity: true,
                 },
-                None,
             )
             .await
             .unwrap();
@@ -227,7 +225,7 @@ mod test_stringify_datetimes {
         let spec_str = fs::read_to_string(spec_path).unwrap();
         let spec: ChartSpec = serde_json::from_str(&spec_str).unwrap();
         // Initialize task graph runtime
-        let runtime = VegaFusionRuntime::new(None);
+        let runtime = VegaFusionRuntime::new(None, None);
 
         let (spec, _warnings) = runtime
             .pre_transform_spec(
@@ -240,7 +238,6 @@ mod test_stringify_datetimes {
                     row_limit: None,
                     preserve_interactivity: true,
                 },
-                None,
             )
             .await
             .unwrap();
@@ -293,7 +290,7 @@ mod test_stringify_datetimes {
         let spec: ChartSpec = serde_json::from_str(&spec_str).unwrap();
 
         // Initialize task graph runtime
-        let runtime = VegaFusionRuntime::new(None);
+        let runtime = VegaFusionRuntime::new(None, None);
 
         let (spec, _warnings) = TOKIO_RUNTIME
             .block_on(runtime.pre_transform_spec(
@@ -306,7 +303,6 @@ mod test_stringify_datetimes {
                     row_limit: None,
                     preserve_interactivity: true,
                 },
-                None,
             ))
             .unwrap();
 
@@ -339,7 +335,7 @@ mod test_stringify_datetimes {
         let spec: ChartSpec = serde_json::from_str(&spec_str).unwrap();
 
         // Initialize task graph runtime
-        let runtime = VegaFusionRuntime::new(None);
+        let runtime = VegaFusionRuntime::new(None, None);
 
         let (spec, _warnings) = runtime
             .pre_transform_spec(
@@ -352,7 +348,6 @@ mod test_stringify_datetimes {
                     row_limit: None,
                     preserve_interactivity: true,
                 },
-                None,
             )
             .await
             .unwrap();

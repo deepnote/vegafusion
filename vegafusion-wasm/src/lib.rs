@@ -26,7 +26,7 @@ use vegafusion_core::planning::watch::{ExportUpdateJSON, ExportUpdateNamespace, 
 use vegafusion_core::proto::gen::services::{
     query_request, query_result, QueryRequest, QueryResult,
 };
-use vegafusion_core::runtime::{PlanExecutor, VegaFusionRuntimeTrait};
+use vegafusion_core::runtime::VegaFusionRuntimeTrait;
 use vegafusion_core::spec::chart::ChartSpec;
 
 use vegafusion_core::chart_state::{ChartState, ChartStateOpts};
@@ -167,11 +167,7 @@ impl VegaFusionRuntimeTrait for QueryFnVegaFusionRuntime {
         task_graph: Arc<TaskGraph>,
         indices: &[NodeValueIndex],
         inline_datasets: &HashMap<String, VegaFusionDataset>,
-        _plan_executor: Option<Arc<dyn PlanExecutor>>,
     ) -> vegafusion_common::error::Result<Vec<NamedTaskValue>> {
-        // TODO: currently plan executor is not used as there is no way to reliably serialize and transmit it. 
-        // Should we just raise an error is fomethign other than None is passed?
-
         // Request initial values
         let request_msg = QueryRequest {
             request: Some(query_request::Request::TaskGraphValues(
@@ -442,7 +438,7 @@ pub async fn vegafusion_embed(
     let runtime: Box<dyn VegaFusionRuntimeTrait> = if query_fn.is_undefined() || query_fn.is_null()
     {
         // Use embedded runtime
-        Box::new(VegaFusionRuntime::new(None))
+        Box::new(VegaFusionRuntime::new(None, None))
     } else {
         let query_fn = query_fn.dyn_into::<js_sys::Function>().map_err(|e| {
             JsError::new(&format!(
@@ -461,7 +457,6 @@ pub async fn vegafusion_embed(
             tz_config,
             row_limit: None,
         },
-        None,
     )
     .await
     .map_err(|e| JsError::new(&e.to_string()))?;
