@@ -169,6 +169,9 @@ impl VegaFusionRuntimeTrait for QueryFnVegaFusionRuntime {
         inline_datasets: &HashMap<String, VegaFusionDataset>,
         _plan_executor: Option<Arc<dyn PlanExecutor>>,
     ) -> vegafusion_common::error::Result<Vec<NamedTaskValue>> {
+        // TODO: currently plan executor is not used as there is no way to reliably serialize and transmit it. 
+        // Should we just raise an error is fomethign other than None is passed?
+
         // Request initial values
         let request_msg = QueryRequest {
             request: Some(query_request::Request::TaskGraphValues(

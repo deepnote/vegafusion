@@ -4,17 +4,15 @@ from typing import Any
 
 try:
     from pyspark.sql import SparkSession
-
-    SPARK_AVAILABLE = True
 except ImportError:
     print("PySpark not available. Please install pyspark to run this example.")
     print("pip install pyspark")
-    SPARK_AVAILABLE = False
+    raise
 
 import vegafusion as vf
 
 
-def create_spark_executor(spark_session: SparkSession):
+def create_spark_executor_for_session(spark_session: SparkSession):
     """Create a Spark executor function that executes SQL queries."""
 
     def spark_executor(sql_query: str) -> pa.Table:
@@ -86,10 +84,6 @@ def load_and_register_movies_data(spark: SparkSession) -> pa.Schema:
 
 
 def main():
-    """Main example function."""
-    if not SPARK_AVAILABLE:
-        return
-
     print("=" * 80)
     print("VegaFusion pre_transform_spec_vendor Example with Apache Spark")
     print("=" * 80)
@@ -99,7 +93,7 @@ def main():
     try:
         movies_schema = load_and_register_movies_data(spark)
 
-        spark_executor = create_spark_executor(spark)
+        spark_executor = create_spark_executor_for_session(spark)
 
         spec = get_spec()
 

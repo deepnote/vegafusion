@@ -47,9 +47,10 @@ class PlanExecutorProtocol(Protocol):
 
 # Type alias for plan executors
 PlanExecutor = Union[
+    # Callable that takes logical plan JSON and returns Arrow table
     Callable[
         [str], "pa.Table"
-    ],  # Callable that takes logical plan JSON and returns Arrow table
+    ],
     PlanExecutorProtocol,  # Object with execute_plan method
 ]
 

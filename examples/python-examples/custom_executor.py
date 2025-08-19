@@ -1,16 +1,10 @@
-"""
-Minimal Custom Executor Example for VegaFusion
-
-This example shows the simplest possible custom executor that logs
-received plans and throws an unimplemented error.
-"""
-
 import vegafusion as vf
 import pyarrow as pa
 
 
 def simple_logging_executor(logical_plan_json: str) -> pa.Table:
     """A minimal executor that logs and throws unimplemented error."""
+    # TODO: Update signature once we pass logical plan as proper structure instead of string
     print("📋 Custom executor received logical plan:")
     print(f"   Plan length: {len(logical_plan_json)} characters")
     print(f"   Plan preview: {logical_plan_json[:100]}...")
@@ -18,6 +12,8 @@ def simple_logging_executor(logical_plan_json: str) -> pa.Table:
     raise NotImplementedError("Custom executor is not implemented yet!")
 
 
+# This example shows the simplest possible custom executor that logs
+# received plans and throws an unimplemented error.
 def main():
     """Demonstrate the minimal custom executor."""
 
