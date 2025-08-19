@@ -330,12 +330,10 @@ class VegaFusionRuntime:
         imported_inline_datasets: dict[str, Table | Schema] = {}
         for name, value in inline_datasets.items():
             columns = inline_dataset_usage.get(name)
-            if pa is not None and isinstance(value, pa.Schema):
+            if (pa is not None and isinstance(value, pa.Schema)) or hasattr(value, "__arrow_c_schema__"):
                 # Handle PyArrow Schema - convert to arro3 Schema
                 # This allows for planning without requiring actual data
-                imported_inline_datasets[name] = Schema.from_arrow(value)
-            elif hasattr(value, "__arrow_c_schema__"):
-                imported_inline_datasets[name] = Schema.from_arrow(value)
+                imported_inline_datasets[name] = Schema.from_arrow(value)  # type: ignore[arg-type]
             elif pd is not None and pa is not None and isinstance(value, pd.DataFrame):
                 # rename to help mypy
                 inner_value: pd.DataFrame = value
