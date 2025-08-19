@@ -8,14 +8,13 @@ use vegafusion_runtime::task_graph::runtime::VegaFusionRuntime;
 async fn main() {
     let spec = get_spec();
 
-    let runtime = VegaFusionRuntime::new(None);
+    let runtime = VegaFusionRuntime::new(None, None);
 
     let (transformed_spec, warnings) = runtime
         .pre_transform_spec(
             &spec,
             &Default::default(), // Inline datasets
             &Default::default(), // Options
-            None,                // Plan executor
         )
         .await
         .unwrap();

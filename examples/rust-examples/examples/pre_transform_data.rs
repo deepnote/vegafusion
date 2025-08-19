@@ -10,7 +10,7 @@ use vegafusion_runtime::task_graph::runtime::VegaFusionRuntime;
 async fn main() {
     let spec = get_spec();
 
-    let runtime = VegaFusionRuntime::new(None);
+    let runtime = VegaFusionRuntime::new(None, None);
 
     let (values, warnings) = runtime
         .pre_transform_values(

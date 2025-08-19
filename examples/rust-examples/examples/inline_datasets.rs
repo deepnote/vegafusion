@@ -30,14 +30,13 @@ async fn main() {
     let inline_datasets: HashMap<String, VegaFusionDataset> =
         vec![("movies".to_string(), dataset)].into_iter().collect();
 
-    let runtime = VegaFusionRuntime::new(None);
+    let runtime = VegaFusionRuntime::new(None, None);
 
     let (transformed_spec, warnings) = runtime
         .pre_transform_spec(
             &spec,
             &inline_datasets,    // Inline datasets
             &Default::default(), // Options
-            None,                // Plan executor
         )
         .await
         .unwrap();
