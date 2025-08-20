@@ -2,7 +2,7 @@
 name = "vegafusion"
 license = "BSD-3-Clause"
 edition = "2021"
-version = "2.0.3"
+version = "2.0.4"
 description = "VegaFusion Python interface"
 
 [lib]
@@ -12,7 +12,7 @@ crate-type = ["cdylib"]
 [features]
 default = ["logical-plan"]
 protobuf-src = ["vegafusion-core/protobuf-src"]
-logical-plan = [] # TODO: this will likely require datafusion-python crate but we can't use it yet due to incompatibilities in versions
+logical-plan = []
 
 [dependencies]
 sysinfo = "0.35.0"
@@ -54,16 +54,16 @@ workspace = true
 [dependencies.vegafusion-common]
 path = "../vegafusion-common"
 features = ["pyo3", "base64"]
-version = "2.0.3"
+version = "2.0.4"
 
 [dependencies.vegafusion-core]
 path = "../vegafusion-core"
 features = ["py", "tonic_support"]
-version = "2.0.3"
+version = "2.0.4"
 
 [dependencies.vegafusion-runtime]
 path = "../vegafusion-runtime"
-version = "2.0.3"
+version = "2.0.4"
 
 [dependencies.tokio]
 workspace = true

@@ -1,12 +1,12 @@
 [[bench]]
 name = "spec_benchmarks"
-harness = false 
+harness = false
 
 [package]
 name = "vegafusion-runtime"
 license = "BSD-3-Clause"
 edition = "2021"
-version = "2.0.3"
+version = "2.0.4"
 description = "VegaFusion Runtime"
 
 [features]
@@ -47,9 +47,6 @@ test-case = "3.3.1"
 pixelmatch = "0.1.0"
 rgb = "0.8.50"
 lodepng = "3.11.0"
-
-[dev-dependencies.base64]
-workspace = true
 
 [dependencies.url]
 workspace = true
@@ -118,12 +115,12 @@ workspace = true
 [dependencies.vegafusion-common]
 path = "../vegafusion-common"
 features = ["json", "sqlparser", "prettyprint", "object_store", "url"]
-version = "2.0.3"
+version = "2.0.4"
 
 [dependencies.vegafusion-core]
 path = "../vegafusion-core"
 features = ["sqlparser"]
-version = "2.0.3"
+version = "2.0.4"
 
 [dependencies.serde]
 workspace = true
@@ -177,6 +174,9 @@ optional = true
 workspace = true
 default-features = false
 features = ["json"]
+
+[dev-dependencies.base64]
+workspace = true
 
 [dev-dependencies.reqwest]
 workspace = true
