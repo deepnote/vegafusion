@@ -160,8 +160,6 @@ impl VegaFusionRuntimeTrait for VegaFusionRuntime {
 
         materialize_export_updates_with_executor(executor, export_updates).await
     }
-
-    
 }
 
 #[async_recursion]

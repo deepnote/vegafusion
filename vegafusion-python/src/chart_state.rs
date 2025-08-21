@@ -1,11 +1,18 @@
 use std::sync::Arc;
 
-use vegafusion_core::{chart_state::{ChartState as RsChartState, ChartStateOpts}, data::dataset::VegaFusionDataset, planning::{plan::PreTransformSpecWarningSpec, watch::WatchPlan}, proto::r#gen::tasks::TzConfig, runtime::VegaFusionRuntimeTrait, spec::chart::ChartSpec};
-use pythonize::{depythonize, pythonize};
-use vegafusion_core::planning::watch::ExportUpdateJSON;
 use pyo3::prelude::*;
-use tokio::runtime::Runtime;
+use pythonize::{depythonize, pythonize};
 use std::collections::HashMap;
+use tokio::runtime::Runtime;
+use vegafusion_core::planning::watch::ExportUpdateJSON;
+use vegafusion_core::{
+    chart_state::{ChartState as RsChartState, ChartStateOpts},
+    data::dataset::VegaFusionDataset,
+    planning::{plan::PreTransformSpecWarningSpec, watch::WatchPlan},
+    proto::r#gen::tasks::TzConfig,
+    runtime::VegaFusionRuntimeTrait,
+    spec::chart::ChartSpec,
+};
 
 #[pyclass]
 pub struct PyChartState {

@@ -90,7 +90,7 @@ def test_spec_against_spark(spec_path: Path, spark: SparkSession):
         default_input_tz="UTC",
         inline_datasets={"sales_data_1kk": SALES_DATA_DF},
         extract_threshold=0,
-        extracted_format="pyarrow"
+        extracted_format="pyarrow",
     )
 
     print("Generating Spark-backed results via custom executor")
@@ -98,8 +98,8 @@ def test_spec_against_spark(spec_path: Path, spark: SparkSession):
     def spark_executor(sql_query: str) -> pa.Table:
         spark_df = spark.sql(sql_query)
         return pa.Table.from_pandas(spark_df.toPandas())
-    
-    vf_spark_runtime = vf.VegaFusionRuntime.new_vendor('sparksql', spark_executor)
+
+    vf_spark_runtime = vf.VegaFusionRuntime.new_vendor("sparksql", spark_executor)
 
     sales_schema = to_arrow_schema(spark.table("sales_data_1kk").schema)
 
@@ -110,7 +110,7 @@ def test_spec_against_spark(spec_path: Path, spark: SparkSession):
         default_input_tz="UTC",
         inline_datasets={"sales_data_1kk": sales_schema},
         extract_threshold=0,
-        extracted_format="pyarrow"
+        extracted_format="pyarrow",
     )
 
     print("Comparing transformed specs (Pandas vs Spark)")

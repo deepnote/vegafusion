@@ -1,12 +1,12 @@
-mod executor;
 mod chart_state;
+mod executor;
 mod utils;
 mod vendor;
 
 use lazy_static::lazy_static;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyList, PyTuple, PyString};
+use pyo3::types::{PyBytes, PyDict, PyList, PyString, PyTuple};
 use std::str::FromStr;
 use std::sync::{Arc, Once};
 use tokio::runtime::Runtime;
@@ -29,7 +29,7 @@ use env_logger::{Builder, Target};
 use serde_json::json;
 use vegafusion_core::planning::plan::{PlannerConfig, PreTransformSpecWarningSpec, SpecPlan};
 use vegafusion_core::planning::projection_pushdown::get_column_usage as rs_get_column_usage;
-use vegafusion_core::planning::watch::{WatchPlan};
+use vegafusion_core::planning::watch::WatchPlan;
 
 use vegafusion_core::task_graph::graph::ScopedVariable;
 use vegafusion_core::task_graph::task_value::TaskValue;
@@ -38,12 +38,11 @@ use vegafusion_runtime::tokio_runtime::TOKIO_THREAD_STACK_SIZE;
 use vegafusion_core::runtime::{PlanExecutor, VegaFusionRuntimeTrait};
 use vegafusion_runtime::task_graph::cache::VegaFusionCache;
 
-
 use vegafusion_common::data::scalar::ScalarValueHelpers;
 
 use crate::chart_state::PyChartState;
+use crate::utils::{parse_json_spec, process_inline_datasets};
 use crate::vendor::select_executor_for_vendor;
-use crate::utils::{process_inline_datasets, parse_json_spec};
 
 static INIT: Once = Once::new();
 
@@ -67,7 +66,6 @@ struct PyVegaFusionRuntime {
 }
 
 impl PyVegaFusionRuntime {
-
     fn build_with_executor(
         max_capacity: Option<usize>,
         memory_limit: Option<usize>,
@@ -95,7 +93,6 @@ impl PyVegaFusionRuntime {
             tokio_runtime: Arc::new(tokio_runtime_connection),
         })
     }
-    
 }
 
 #[pymethods]
@@ -463,7 +460,10 @@ impl PyVegaFusionRuntime {
             let py_export_list = PyList::empty(py);
             for export_update in export_updates {
                 let py_export_dict = PyDict::new(py);
-                py_export_dict.set_item("namespace", pythonize::pythonize(py, &export_update.namespace)?)?;
+                py_export_dict.set_item(
+                    "namespace",
+                    pythonize::pythonize(py, &export_update.namespace)?,
+                )?;
                 py_export_dict.set_item("name", export_update.name)?;
 
                 match export_update.value {
@@ -633,4 +633,3 @@ fn _vegafusion(_py: Python, m: &Bound<PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }
-

@@ -1,11 +1,11 @@
 use crate::arrow::array::ListArray;
 use datafusion_common::ScalarValue;
 use std::mem::{size_of, size_of_val};
-use vegafusion_common::datafusion_expr::LogicalPlan;
 use vegafusion_common::arrow::array::ArrayRef;
 use vegafusion_common::arrow::datatypes::{DataType, Field, FieldRef, Schema};
 use vegafusion_common::arrow::record_batch::RecordBatch;
 use vegafusion_common::data::table::VegaFusionTable;
+use vegafusion_common::datafusion_expr::LogicalPlan;
 
 /// Get the size of a Field value, including any inner heap-allocated data
 fn size_of_field(field: &FieldRef) -> usize {
@@ -97,9 +97,10 @@ pub fn inner_size_of_table(value: &VegaFusionTable) -> usize {
 }
 
 pub fn inner_size_of_logical_plan(plan: &LogicalPlan) -> usize {
-    size_of_val(&plan) + plan
-        .inputs()
-        .iter()
-        .map(|p| inner_size_of_logical_plan(p))
-        .sum::<usize>()
+    size_of_val(&plan)
+        + plan
+            .inputs()
+            .iter()
+            .map(|p| inner_size_of_logical_plan(p))
+            .sum::<usize>()
 }

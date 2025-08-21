@@ -827,8 +827,8 @@ class VegaFusionRuntime:
                 transformations are applied even if they break the original interactive
                 behavior of the chart.
             inline_datasets: A dict from dataset names to pandas DataFrames, pyarrow
-                Tables, or pyarrow Schemas. Inline datasets may be referenced by the input 
-                specification using the following url syntax 
+                Tables, or pyarrow Schemas. Inline datasets may be referenced by the
+                input specification using the following url syntax
                 'vegafusion+dataset://{dataset_name}' or 'table://{dataset_name}'.
 
             keep_signals: Signals from the input spec that must be included in the

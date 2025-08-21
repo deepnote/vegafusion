@@ -270,9 +270,7 @@ impl VegaFusionError {
             DataFusionError(err, context) => {
                 VegaFusionError::ExternalError(err.to_string(), context.clone())
             }
-            VendorError(msg, context) => {
-                VegaFusionError::VendorError(msg.clone(), context.clone())
-            }
+            VendorError(msg, context) => VegaFusionError::VendorError(msg.clone(), context.clone()),
             #[cfg(feature = "proto")]
             DataFusionProtoError(err, context) => {
                 VegaFusionError::ExternalError(err.to_string(), context.clone())

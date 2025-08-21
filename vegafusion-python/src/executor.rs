@@ -1,23 +1,21 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use pyo3::exceptions::PyValueError;
+use pyo3::prelude::*;
+use pyo3::types::PyString;
 use vegafusion_common::{data::table::VegaFusionTable, datafusion_expr::LogicalPlan};
 use vegafusion_core::runtime::PlanExecutor;
-use pyo3::prelude::*;
-use pyo3::exceptions::PyValueError;
-use pyo3::types::PyString;
 
 pub struct PythonPlanExecutor {
     python_executor: PyObject,
 }
-
 
 impl PythonPlanExecutor {
     fn new(python_executor: PyObject) -> Self {
         Self { python_executor }
     }
 }
-
 
 #[async_trait]
 impl PlanExecutor for PythonPlanExecutor {
@@ -67,7 +65,6 @@ impl PlanExecutor for PythonPlanExecutor {
         }
     }
 }
-
 
 /// Helper function to convert a Python object to a PlanExecutor
 /// Accepts either:

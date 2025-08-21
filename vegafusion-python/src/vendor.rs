@@ -1,20 +1,19 @@
 use std::sync::Arc;
 
+use crate::executor::python_object_to_executor;
 use async_trait::async_trait;
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use vegafusion_core::runtime::PlanExecutor;
-use vegafusion_runtime::sql::logical_plan_to_spark_sql;
-use vegafusion_common::{data::table::VegaFusionTable, datafusion_expr::LogicalPlan};
 use pyo3::types::PyString;
 use tokio::sync::Mutex;
-use pyo3::exceptions::PyValueError;
-use crate::executor::python_object_to_executor;
+use vegafusion_common::{data::table::VegaFusionTable, datafusion_expr::LogicalPlan};
+use vegafusion_core::runtime::PlanExecutor;
+use vegafusion_runtime::sql::logical_plan_to_spark_sql;
 
 pub struct SparkSqlPlanExecutor {
     python_executor: PyObject,
     mutex: Arc<Mutex<()>>,
 }
-
 
 impl SparkSqlPlanExecutor {
     pub fn new(python_executor: PyObject) -> Self {
@@ -24,7 +23,6 @@ impl SparkSqlPlanExecutor {
         }
     }
 }
-
 
 pub fn select_executor_for_vendor(
     vendor: Option<String>,

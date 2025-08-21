@@ -27,11 +27,11 @@ use crate::{
     },
 };
 use async_trait::async_trait;
+use futures::future::try_join_all;
 use vegafusion_common::{
     data::table::VegaFusionTable,
     error::{Result, ResultWithContext, VegaFusionError},
 };
-use futures::future::try_join_all;
 
 /// Materialize a list of export updates using the provided plan executor
 pub async fn materialize_export_updates_with_executor(
@@ -406,8 +406,6 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
 
         Ok((task_values, warnings))
     }
-
-    
 
     async fn pre_transform_logical_plan(
         &self,

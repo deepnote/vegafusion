@@ -3,17 +3,17 @@ use std::sync::Arc;
 
 use datafusion::datasource::empty::EmptyTable;
 use datafusion::datasource::provider_as_source;
+use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::PyValueError as PyValErr;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use pyo3_arrow::PySchema;
+use pythonize::depythonize;
+use std::borrow::Cow;
 use vegafusion_common::data::table::VegaFusionTable;
 use vegafusion_common::datafusion_expr::LogicalPlanBuilder;
 use vegafusion_core::data::dataset::VegaFusionDataset;
-use pyo3::exceptions::PyValueError;
-use pythonize::depythonize;
 use vegafusion_core::spec::chart::ChartSpec;
-use pyo3::exceptions::PyValueError as PyValErr;
-use std::borrow::Cow;
 
 /// Convert optional inline datasets provided from Python into VegaFusion datasets.
 pub fn process_inline_datasets(
@@ -37,24 +37,21 @@ pub fn process_inline_datasets(
                         // Build an empty table provider with the given schema and scan it
                         let provider = Arc::new(EmptyTable::new(schema.clone()));
                         let table_source = provider_as_source(provider);
-                        let logical_plan = LogicalPlanBuilder::scan(
-                            &name.to_string(),
-                            table_source,
-                            None,
-                        )
-                        .map_err(|e| {
-                            PyValueError::new_err(format!(
-                                "Failed to build logical plan from schema: {}",
-                                e
-                            ))
-                        })?
-                        .build()
-                        .map_err(|e| {
-                            PyValueError::new_err(format!(
-                                "Failed to finalize logical plan from schema: {}",
-                                e
-                            ))
-                        })?;
+                        let logical_plan =
+                            LogicalPlanBuilder::scan(&name.to_string(), table_source, None)
+                                .map_err(|e| {
+                                    PyValueError::new_err(format!(
+                                        "Failed to build logical plan from schema: {}",
+                                        e
+                                    ))
+                                })?
+                                .build()
+                                .map_err(|e| {
+                                    PyValueError::new_err(format!(
+                                        "Failed to finalize logical plan from schema: {}",
+                                        e
+                                    ))
+                                })?;
 
                         VegaFusionDataset::from_plan(logical_plan)
                     } else {
@@ -98,5 +95,3 @@ pub fn parse_json_spec(chart_spec: PyObject) -> PyResult<ChartSpec> {
         }
     })
 }
-
-

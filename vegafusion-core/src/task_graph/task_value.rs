@@ -2,7 +2,9 @@ use crate::proto::gen::tasks::task_value::Data;
 use crate::proto::gen::tasks::ResponseTaskValue;
 use crate::proto::gen::tasks::{TaskGraphValueResponse, TaskValue as ProtoTaskValue, Variable};
 use crate::runtime::PlanExecutor;
-use crate::task_graph::memory::{inner_size_of_scalar, inner_size_of_table, inner_size_of_logical_plan};
+use crate::task_graph::memory::{
+    inner_size_of_logical_plan, inner_size_of_scalar, inner_size_of_table,
+};
 use datafusion_common::ScalarValue;
 use serde_json::Value;
 use std::convert::TryFrom;
@@ -12,7 +14,6 @@ use vegafusion_common::data::scalar::ScalarValueHelpers;
 use vegafusion_common::data::table::VegaFusionTable;
 use vegafusion_common::datafusion_expr::LogicalPlan;
 use vegafusion_common::error::{Result, ResultWithContext, VegaFusionError};
-
 
 #[derive(Debug, Clone)]
 pub enum TaskValue {
@@ -116,8 +117,8 @@ impl TryFrom<&ProtoTaskValue> for TaskValue {
             // TODO: we could use datafusion_proto::bytes::logical_plan_from_bytes here, but that
             // requires adding datafusion_proto to vegafusion-core deps, as well as passing
             // datafusion session (maybe empty one?) to unserialize plan
-            Data::Plan(_value) =>Err(VegaFusionError::internal(  
-            "Deserialization of Plan TaskValue not yet implemented"  
+            Data::Plan(_value) => Err(VegaFusionError::internal(
+                "Deserialization of Plan TaskValue not yet implemented",
             )),
         }
     }
