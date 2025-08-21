@@ -17,29 +17,18 @@ use vegafusion_common::error::{Result, VegaFusionError};
 // it into an SQL string. This allows us to rewrite parts of the plan or syntax tree to
 // be compatible with Spark.
 pub fn logical_plan_to_spark_sql(plan: &LogicalPlan) -> Result<String> {
-    // println!("Plan before processing");
-    // println!("{:#?}", plan);
-
     let plan = plan.clone();
     let processed_plan = rewrite_subquery_column_identifiers(plan)?;
     let processed_plan = rewrite_datetime_formatting(processed_plan)?;
 
-    // println!("===============================");
-    // println!("Plan after processing");
-    // println!("{:#?}", processed_plan);
-
     let dialect = CustomDialectBuilder::new().build();
     let unparser = Unparser::new(&dialect).with_pretty(true);
     let mut statement = unparser.plan_to_sql(&processed_plan).map_err(|e| {
-        VegaFusionError::unparser(format!(
+        VegaFusionError::vendor(format!(
             "Failed to generate SQL AST from logical plan: {}",
             e
         ))
     })?;
-
-    // println!("===============================");
-    // println!("AST before processing");
-    // println!("{:#?}", statement);
 
     rewrite_row_number(&mut statement);
     rewrite_inf_and_nan(&mut statement);
@@ -48,10 +37,6 @@ pub fn logical_plan_to_spark_sql(plan: &LogicalPlan) -> Result<String> {
     rewrite_intervals(&mut statement);
     rewrite_nested_is_null(&mut statement);
     rewrite_column_identifiers(&mut statement);
-
-    // println!("===============================");
-    // println!("AST after processing");
-    // println!("{:#?}", statement);
 
     let spark_sql = statement.to_string();
 
@@ -289,7 +274,7 @@ fn rewrite_subquery_column_identifiers(plan: LogicalPlan) -> Result<LogicalPlan>
             Ok(Transformed::no(p))
         })
         .map_err(|e| {
-            VegaFusionError::unparser(format!(
+            VegaFusionError::vendor(format!(
                 "Failed to rewrite subquery column identifiers: {}",
                 e
             ))
@@ -338,8 +323,8 @@ fn rewrite_datetime_formatting(plan: LogicalPlan) -> Result<LogicalPlan> {
                 .data;
             Ok(Transformed::yes(p))
         })
-        .map_err(|e| {
-            VegaFusionError::unparser(format!("Failed to rewrite datetime formatting: {}", e))
+        .map_err(|e: datafusion_common::DataFusionError| {
+            VegaFusionError::vendor(format!("Failed to rewrite datetime formatting: {}", e))
         })?
         .data;
 
@@ -454,7 +439,7 @@ fn chrono_to_spark(fmt: &str) -> Result<String> {
                 match CHRONO_SPARK_MAP.get(key.as_str()) {
                     Some(rep) => out.push_str(rep),
                     None => {
-                        return Err(VegaFusionError::unparser(format!(
+                        return Err(VegaFusionError::vendor(format!(
                             "unsupported specifier %{}",
                             key
                         )))

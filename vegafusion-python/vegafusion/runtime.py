@@ -330,7 +330,9 @@ class VegaFusionRuntime:
         imported_inline_datasets: dict[str, Table | Schema] = {}
         for name, value in inline_datasets.items():
             columns = inline_dataset_usage.get(name)
-            if (pa is not None and isinstance(value, pa.Schema)) or hasattr(value, "__arrow_c_schema__"):
+            if (pa is not None and isinstance(value, pa.Schema)) or hasattr(
+                value, "__arrow_c_schema__"
+            ):
                 # Handle PyArrow Schema - convert to arro3 Schema
                 # This allows for planning without requiring actual data
                 imported_inline_datasets[name] = Schema.from_arrow(value)  # type: ignore[arg-type]
@@ -804,12 +806,12 @@ class VegaFusionRuntime:
         keep_datasets: list[str | tuple[str, list[int]]] | None = None,
     ) -> tuple[dict[str, Any], list[dict[str, Any]], list[PreTransformWarning]]:
         """
-        TODO: verify that this docstring is correct
-        Evaluate supported transforms in an input Vega specification using
+        Evaluate supported transforms in an input Vega specification into
         logical plans.
 
-        This method accepts inline datasets (including schemas) instead of requiring
-        data to be loaded separately, allowing for planning and optimization.
+        This method is similar to pre_transform_datasets, but for inline
+        datasets defined as schema, it will return logical plan instead
+        or applying transformations directly on data.
 
         Args:
             spec: A Vega specification dict or JSON string.
@@ -824,10 +826,10 @@ class VegaFusionRuntime:
                 than being pre-transformed. If False, then all possible data
                 transformations are applied even if they break the original interactive
                 behavior of the chart.
-            inline_datasets: A dictionary mapping dataset names to PyArrow tables,
-                schemas, or other supported data formats. These datasets can be
-                referenced in the spec using "vegafusion+dataset://{dataset_name}"
-                URLs.
+            inline_datasets: A dict from dataset names to pandas DataFrames, pyarrow
+                Tables, or pyarrow Schemas. Inline datasets may be referenced by the input 
+                specification using the following url syntax 
+                'vegafusion+dataset://{dataset_name}' or 'table://{dataset_name}'.
 
             keep_signals: Signals from the input spec that must be included in the
                 pre-transformed spec, even if they are no longer referenced.
@@ -854,6 +856,7 @@ class VegaFusionRuntime:
               included but left empty.
             * Export updates as a list of dictionaries with keys:
               * `"name"`: dataset name
+              * `"namespace"`: where this dataset belongs, either `"data"` or `"signal"`
               * `"logical_plan"`: json representation of LogicalPlan (when applicable)
               * `"data"`: materialized data (when applicable)
             * A list of warnings as dictionaries. Each warning dict has a ``'type'``

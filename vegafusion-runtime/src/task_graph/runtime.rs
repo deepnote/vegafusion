@@ -5,8 +5,6 @@ use crate::task_graph::task::TaskCall;
 use crate::task_graph::timezone::RuntimeTzConfig;
 use async_recursion::async_recursion;
 use cfg_if::cfg_if;
-use datafusion::datasource::empty::EmptyTable;
-use datafusion::datasource::provider_as_source;
 use datafusion::prelude::SessionContext;
 use futures_util::{future, FutureExt};
 use std::any::Any;
@@ -14,8 +12,6 @@ use std::collections::HashMap;
 use std::convert::TryInto;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
-use vegafusion_common::arrow::datatypes::SchemaRef;
-use vegafusion_common::datafusion_expr::LogicalPlanBuilder;
 use vegafusion_core::data::dataset::VegaFusionDataset;
 use vegafusion_core::error::{Result, ResultWithContext, VegaFusionError};
 use vegafusion_core::planning::watch::{ExportUpdate, ExportUpdateArrow};
@@ -165,17 +161,7 @@ impl VegaFusionRuntimeTrait for VegaFusionRuntime {
         materialize_export_updates_with_executor(executor, export_updates).await
     }
 
-    fn create_dataset_from_schema(
-        &self,
-        name: &str,
-        schema: SchemaRef,
-    ) -> Result<VegaFusionDataset> {
-        let provider = Arc::new(EmptyTable::new(schema.clone()));
-        let table_source = provider_as_source(provider);
-        let logical_plan = LogicalPlanBuilder::scan(name, table_source, None)?.build()?;
-
-        Ok(VegaFusionDataset::from_plan(logical_plan))
-    }
+    
 }
 
 #[async_recursion]

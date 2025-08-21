@@ -25,7 +25,6 @@ dev-py = { cmd = [
   "-m",
   "vegafusion-python/Cargo.toml",
   "--release",
-  "--extras=datafusion"
 ] }
 
 # Build Python packages

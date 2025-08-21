@@ -28,30 +28,29 @@ use crate::{
 };
 use async_trait::async_trait;
 use vegafusion_common::{
-    arrow::datatypes::SchemaRef,
     data::table::VegaFusionTable,
     error::{Result, ResultWithContext, VegaFusionError},
 };
+use futures::future::try_join_all;
 
 /// Materialize a list of export updates using the provided plan executor
 pub async fn materialize_export_updates_with_executor(
     executor: Arc<dyn PlanExecutor>,
     export_updates: Vec<ExportUpdate>,
 ) -> Result<Vec<ExportUpdateArrow>> {
-    let mut result = Vec::new();
-    for export_update in export_updates {
-        let materialized_value = export_update
-            .value
-            .to_materialized(executor.clone())
-            .await?;
-        result.push(ExportUpdateArrow {
-            namespace: export_update.namespace,
-            name: export_update.name,
-            scope: export_update.scope,
-            value: materialized_value,
-        });
-    }
-    Ok(result)
+    try_join_all(export_updates.into_iter().map(|eu| {
+        let exec = executor.clone();
+        async move {
+            let value = eu.value.to_materialized(exec).await?;
+            Ok(ExportUpdateArrow {
+                namespace: eu.namespace,
+                name: eu.name,
+                scope: eu.scope,
+                value,
+            })
+        }
+    }))
+    .await
 }
 
 #[derive(Clone, Debug)]
@@ -387,7 +386,7 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
         let mut task_values: Vec<TaskValue> = Vec::new();
         let row_limit = options.row_limit.map(|l| l as usize);
         for named_task_value in named_task_values {
-            let value: TaskValue = named_task_value.value;
+            let value = named_task_value.value;
             let variable = named_task_value.variable;
 
             // Apply row_limit
@@ -408,16 +407,7 @@ pub trait VegaFusionRuntimeTrait: Send + Sync {
         Ok((task_values, warnings))
     }
 
-    fn create_dataset_from_schema(
-        &self,
-        _name: &str,
-        _schema: SchemaRef,
-    ) -> Result<VegaFusionDataset> {
-        // This is available only in embedded runtime
-        Err(VegaFusionError::internal(
-            "create_dataset_from_schema not implemented for this runtime",
-        ))
-    }
+    
 
     async fn pre_transform_logical_plan(
         &self,

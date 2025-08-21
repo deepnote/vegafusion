@@ -59,6 +59,7 @@ impl VegaFusionRuntimeGrpc {
                     .await
                 {
                     Ok(response_values) => {
+
                         // Materialize all TaskValues before converting to protobuf
                         let materialized_futures: Vec<_> = response_values
                             .into_iter()

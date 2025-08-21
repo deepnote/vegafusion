@@ -2,7 +2,7 @@ use crate::proto::gen::tasks::task_value::Data;
 use crate::proto::gen::tasks::ResponseTaskValue;
 use crate::proto::gen::tasks::{TaskGraphValueResponse, TaskValue as ProtoTaskValue, Variable};
 use crate::runtime::PlanExecutor;
-use crate::task_graph::memory::{inner_size_of_scalar, inner_size_of_table};
+use crate::task_graph::memory::{inner_size_of_scalar, inner_size_of_table, inner_size_of_logical_plan};
 use datafusion_common::ScalarValue;
 use serde_json::Value;
 use std::convert::TryFrom;
@@ -13,13 +13,6 @@ use vegafusion_common::data::table::VegaFusionTable;
 use vegafusion_common::datafusion_expr::LogicalPlan;
 use vegafusion_common::error::{Result, ResultWithContext, VegaFusionError};
 
-fn logical_plan_node_count(plan: &LogicalPlan) -> usize {
-    1 + plan
-        .inputs()
-        .iter()
-        .map(|p| logical_plan_node_count(p))
-        .sum::<usize>()
-}
 
 #[derive(Debug, Clone)]
 pub enum TaskValue {
@@ -57,8 +50,7 @@ impl TaskValue {
         let inner_size = match self {
             TaskValue::Scalar(scalar) => inner_size_of_scalar(scalar),
             TaskValue::Table(table) => inner_size_of_table(table),
-            // Assume fixed size (256 bytes) for each plan node
-            TaskValue::Plan(plan) => logical_plan_node_count(plan) * 256,
+            TaskValue::Plan(plan) => inner_size_of_logical_plan(plan),
         };
 
         std::mem::size_of::<Self>() + inner_size
@@ -106,24 +98,6 @@ impl MaterializedTaskValue {
             MaterializedTaskValue::Table(value) => Ok(value.to_json()?),
         }
     }
-
-    pub fn size_of(&self) -> usize {
-        let inner_size = match self {
-            MaterializedTaskValue::Scalar(scalar) => inner_size_of_scalar(scalar),
-            MaterializedTaskValue::Table(table) => inner_size_of_table(table),
-        };
-
-        std::mem::size_of::<Self>() + inner_size
-    }
-}
-
-impl From<MaterializedTaskValue> for TaskValue {
-    fn from(value: MaterializedTaskValue) -> Self {
-        match value {
-            MaterializedTaskValue::Scalar(scalar) => TaskValue::Scalar(scalar),
-            MaterializedTaskValue::Table(table) => TaskValue::Table(table),
-        }
-    }
 }
 
 impl TryFrom<&ProtoTaskValue> for TaskValue {
@@ -142,7 +116,9 @@ impl TryFrom<&ProtoTaskValue> for TaskValue {
             // TODO: we could use datafusion_proto::bytes::logical_plan_from_bytes here, but that
             // requires adding datafusion_proto to vegafusion-core deps, as well as passing
             // datafusion session (maybe empty one?) to unserialize plan
-            Data::Plan(_value) => todo!(),
+            Data::Plan(_value) =>Err(VegaFusionError::internal(  
+            "Deserialization of Plan TaskValue not yet implemented"  
+            )),
         }
     }
 }

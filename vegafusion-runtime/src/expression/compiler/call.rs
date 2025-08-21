@@ -151,6 +151,7 @@ pub fn compile_call(
 
                                 callee(table, &node.arguments[1..], schema, &tz_config)
                             } else {
+                                // Should we try to materialize dataset through executor?
                                 Err(VegaFusionError::internal(format!(
                                     "Dataset {} is not materialized as table",
                                     name

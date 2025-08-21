@@ -1,15 +1,17 @@
+mod executor;
+mod chart_state;
+mod utils;
+mod vendor;
+
 use lazy_static::lazy_static;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
-use std::borrow::Cow;
-use std::collections::HashMap;
+use pyo3::types::{PyBytes, PyDict, PyList, PyTuple, PyString};
 use std::str::FromStr;
 use std::sync::{Arc, Once};
 use tokio::runtime::Runtime;
-use tokio::sync::Mutex;
 use tonic::transport::{Channel, Uri};
-use vegafusion_core::chart_state::{ChartState as RsChartState, ChartStateOpts};
+
 use vegafusion_core::error::{ToExternalError, VegaFusionError};
 use vegafusion_core::proto::gen::pretransform::pre_transform_extract_warning::WarningType as ExtractWarningType;
 use vegafusion_core::proto::gen::pretransform::pre_transform_logical_plan_warning::WarningType as LogicalPlanWarningType;
@@ -21,19 +23,14 @@ use vegafusion_core::proto::gen::pretransform::{
 use vegafusion_core::proto::gen::tasks::{TzConfig, Variable};
 use vegafusion_runtime::task_graph::GrpcVegaFusionRuntime;
 
-use vegafusion_runtime::sql::logical_plan_to_spark_sql;
 use vegafusion_runtime::task_graph::runtime::VegaFusionRuntime;
 
 use env_logger::{Builder, Target};
-use pythonize::{depythonize, pythonize};
 use serde_json::json;
-use vegafusion_common::data::table::VegaFusionTable;
-use vegafusion_core::data::dataset::VegaFusionDataset;
 use vegafusion_core::planning::plan::{PlannerConfig, PreTransformSpecWarningSpec, SpecPlan};
 use vegafusion_core::planning::projection_pushdown::get_column_usage as rs_get_column_usage;
-use vegafusion_core::planning::watch::{ExportUpdateJSON, WatchPlan};
+use vegafusion_core::planning::watch::{WatchPlan};
 
-use vegafusion_core::spec::chart::ChartSpec;
 use vegafusion_core::task_graph::graph::ScopedVariable;
 use vegafusion_core::task_graph::task_value::TaskValue;
 use vegafusion_runtime::tokio_runtime::TOKIO_THREAD_STACK_SIZE;
@@ -41,11 +38,12 @@ use vegafusion_runtime::tokio_runtime::TOKIO_THREAD_STACK_SIZE;
 use vegafusion_core::runtime::{PlanExecutor, VegaFusionRuntimeTrait};
 use vegafusion_runtime::task_graph::cache::VegaFusionCache;
 
-use async_trait::async_trait;
-use pyo3::types::PyString;
-use pyo3_arrow::PySchema;
+
 use vegafusion_common::data::scalar::ScalarValueHelpers;
-use vegafusion_common::datafusion_expr::LogicalPlan;
+
+use crate::chart_state::PyChartState;
+use crate::vendor::select_executor_for_vendor;
+use crate::utils::{process_inline_datasets, parse_json_spec};
 
 static INIT: Once = Once::new();
 
@@ -62,250 +60,6 @@ lazy_static! {
     static ref SYSTEM_INSTANCE: sysinfo::System = sysinfo::System::new_all();
 }
 
-struct PythonPlanExecutor {
-    python_executor: PyObject,
-}
-
-struct SparkSqlPlanExecutor {
-    python_executor: PyObject,
-    mutex: Arc<Mutex<()>>,
-}
-
-impl PythonPlanExecutor {
-    fn new(python_executor: PyObject) -> Self {
-        Self { python_executor }
-    }
-}
-
-impl SparkSqlPlanExecutor {
-    fn new(python_executor: PyObject) -> Self {
-        Self {
-            python_executor,
-            mutex: Arc::new(Mutex::new(())),
-        }
-    }
-}
-
-#[async_trait]
-impl PlanExecutor for PythonPlanExecutor {
-    async fn execute_plan(
-        &self,
-        plan: LogicalPlan,
-    ) -> vegafusion_common::error::Result<VegaFusionTable> {
-        let plan_str = format!("{}", plan.display_pg_json());
-
-        let python_executor = &self.python_executor;
-        let result = tokio::task::spawn_blocking({
-            let python_executor = Python::with_gil(|py| python_executor.clone_ref(py));
-            let plan_str = plan_str.clone();
-
-            move || {
-                Python::with_gil(|py| -> PyResult<VegaFusionTable> {
-                    let plan_py = PyString::new(py, &plan_str);
-
-                    let table_result = if python_executor.bind(py).is_callable() {
-                        python_executor.call1(py, (plan_py,))
-                    } else if python_executor.bind(py).hasattr("execute_plan")? {
-                        let execute_plan_method =
-                            python_executor.bind(py).getattr("execute_plan")?;
-                        execute_plan_method
-                            .call1((plan_py,))
-                            .map(|result| result.into())
-                    } else {
-                        return Err(PyValueError::new_err(
-                            "Executor must be callable or have an execute_plan method",
-                        ));
-                    }?;
-
-                    VegaFusionTable::from_pyarrow(py, &table_result.bind(py))
-                })
-            }
-        })
-        .await;
-
-        match result {
-            Ok(Ok(table)) => Ok(table),
-            Ok(Err(py_err)) => Err(vegafusion_common::error::VegaFusionError::internal(
-                format!("Python executor error: {}", py_err),
-            )),
-            Err(join_err) => Err(vegafusion_common::error::VegaFusionError::internal(
-                format!("Failed to execute Python executor: {}", join_err),
-            )),
-        }
-    }
-}
-
-#[async_trait]
-impl PlanExecutor for SparkSqlPlanExecutor {
-    async fn execute_plan(
-        &self,
-        plan: LogicalPlan,
-    ) -> vegafusion_common::error::Result<VegaFusionTable> {
-        // Acquire mutex lock to ensure only one request runs at a time
-        let _lock = self.mutex.lock().await;
-
-        // Convert logical plan to SparkSQL
-        let spark_sql = logical_plan_to_spark_sql(&plan)?;
-
-        let python_executor = &self.python_executor;
-        let result = tokio::task::spawn_blocking({
-            let python_executor = Python::with_gil(|py| python_executor.clone_ref(py));
-            let spark_sql = spark_sql.clone();
-
-            move || {
-                Python::with_gil(|py| -> PyResult<VegaFusionTable> {
-                    let sql_py = PyString::new(py, &spark_sql);
-
-                    let table_result = if python_executor.bind(py).is_callable() {
-                        python_executor.call1(py, (sql_py,))
-                    } else if python_executor.bind(py).hasattr("execute_plan")? {
-                        let execute_plan_method =
-                            python_executor.bind(py).getattr("execute_plan")?;
-                        execute_plan_method
-                            .call1((sql_py,))
-                            .map(|result| result.into())
-                    } else {
-                        return Err(PyValueError::new_err(
-                            "Executor must be callable or have an execute_plan method",
-                        ));
-                    }?;
-
-                    VegaFusionTable::from_pyarrow(py, &table_result.bind(py))
-                })
-            }
-        })
-        .await;
-
-        match result {
-            Ok(Ok(table)) => Ok(table),
-            Ok(Err(py_err)) => Err(vegafusion_common::error::VegaFusionError::internal(
-                format!("Python executor error: {}", py_err),
-            )),
-            Err(join_err) => Err(vegafusion_common::error::VegaFusionError::internal(
-                format!("Failed to execute Python executor: {}", join_err),
-            )),
-        }
-    }
-}
-
-/// Helper function to convert a Python object to a PlanExecutor
-/// Accepts either:
-/// - A callable that takes a logical plan string and returns an Arrow table
-/// - An object with execute_plan method that has the same signature
-fn python_object_to_executor(
-    python_obj: Option<PyObject>,
-) -> PyResult<Option<Arc<dyn PlanExecutor>>> {
-    match python_obj {
-        Some(obj) => {
-            Python::with_gil(|py| -> PyResult<Option<Arc<dyn PlanExecutor>>> {
-                let obj_ref = obj.bind(py);
-
-                // Validate that the object is either callable or has execute_plan method
-                if obj_ref.is_callable() || obj_ref.hasattr("execute_plan")? {
-                    Ok(Some(Arc::new(PythonPlanExecutor::new(obj))))
-                } else {
-                    Err(PyValueError::new_err(
-                        "Executor must be callable or have an execute_plan method",
-                    ))
-                }
-            })
-        }
-        None => Ok(None),
-    }
-}
-
-#[pyclass]
-struct PyChartState {
-    runtime: Arc<dyn VegaFusionRuntimeTrait>,
-    state: RsChartState,
-    tokio_runtime: Arc<Runtime>,
-}
-
-impl PyChartState {
-    pub fn try_new(
-        runtime: Arc<dyn VegaFusionRuntimeTrait>,
-        tokio_runtime: Arc<Runtime>,
-        spec: ChartSpec,
-        inline_datasets: HashMap<String, VegaFusionDataset>,
-        tz_config: TzConfig,
-        row_limit: Option<u32>,
-    ) -> PyResult<Self> {
-        let state = tokio_runtime.block_on(RsChartState::try_new(
-            runtime.as_ref(),
-            spec,
-            inline_datasets,
-            ChartStateOpts {
-                tz_config,
-                row_limit,
-            },
-        ))?;
-        Ok(Self {
-            runtime,
-            state,
-            tokio_runtime,
-        })
-    }
-}
-
-#[pymethods]
-impl PyChartState {
-    /// Update chart state with updates from the client
-    pub fn update(&self, py: Python, updates: Vec<PyObject>) -> PyResult<Vec<PyObject>> {
-        let updates = updates
-            .into_iter()
-            .map(|el| Ok(depythonize::<ExportUpdateJSON>(&el.bind(py).clone())?))
-            .collect::<PyResult<Vec<_>>>()?;
-
-        let result_updates = py.allow_threads(|| {
-            self.tokio_runtime
-                .block_on(self.state.update(self.runtime.as_ref(), updates))
-        })?;
-
-        let a = result_updates
-            .into_iter()
-            .map(|el| Ok(pythonize(py, &el)?.into()))
-            .collect::<PyResult<Vec<PyObject>>>()?;
-        Ok(a)
-    }
-
-    /// Get ChartState's initial input spec
-    pub fn get_input_spec(&self, py: Python) -> PyResult<PyObject> {
-        Ok(pythonize(py, self.state.get_input_spec())?.into())
-    }
-
-    /// Get ChartState's server spec
-    pub fn get_server_spec(&self, py: Python) -> PyResult<PyObject> {
-        Ok(pythonize(py, self.state.get_server_spec())?.into())
-    }
-
-    /// Get ChartState's client spec
-    pub fn get_client_spec(&self, py: Python) -> PyResult<PyObject> {
-        Ok(pythonize(py, self.state.get_client_spec())?.into())
-    }
-
-    /// Get ChartState's initial transformed spec
-    pub fn get_transformed_spec(&self, py: Python) -> PyResult<PyObject> {
-        Ok(pythonize(py, self.state.get_transformed_spec())?.into())
-    }
-
-    /// Get ChartState's watch plan
-    pub fn get_comm_plan(&self, py: Python) -> PyResult<PyObject> {
-        let comm_plan = WatchPlan::from(self.state.get_comm_plan().clone());
-        Ok(pythonize(py, &comm_plan)?.into())
-    }
-
-    /// Get list of transform warnings
-    pub fn get_warnings(&self, py: Python) -> PyResult<PyObject> {
-        let warnings: Vec<_> = self
-            .state
-            .get_warnings()
-            .iter()
-            .map(PreTransformSpecWarningSpec::from)
-            .collect();
-        Ok(pythonize::pythonize(py, &warnings)?.into())
-    }
-}
-
 #[pyclass]
 struct PyVegaFusionRuntime {
     runtime: Arc<dyn VegaFusionRuntimeTrait>,
@@ -313,41 +67,6 @@ struct PyVegaFusionRuntime {
 }
 
 impl PyVegaFusionRuntime {
-    fn select_executor_for_vendor(
-        vendor: Option<String>,
-        executor: Option<PyObject>,
-    ) -> PyResult<Option<Arc<dyn PlanExecutor>>> {
-        match vendor.as_deref() {
-            Some("sparksql") => {
-                let py_exec = executor.ok_or_else(|| {
-                    PyValueError::new_err(
-                        "'executor' is required for vendor='sparksql' and must be callable or have execute_plan",
-                    )
-                })?;
-
-                Python::with_gil(|py| -> PyResult<()> {
-                    let obj_ref = py_exec.bind(py);
-                    if obj_ref.is_callable() || obj_ref.hasattr("execute_plan")? {
-                        Ok(())
-                    } else {
-                        Err(PyValueError::new_err(
-                            "Executor must be callable or have an execute_plan method",
-                        ))
-                    }
-                })?;
-
-                Ok(Some(Arc::new(SparkSqlPlanExecutor::new(py_exec))))
-            }
-            Some("datafusion") | Some("") | None => {
-                // Fall back to default DataFusion if no executor; otherwise wrap Python executor
-                python_object_to_executor(executor)
-            }
-            Some(other) => Err(PyValueError::new_err(format!(
-                "Unsupported vendor: '{}'. Supported vendors: 'datafusion', 'sparksql'",
-                other
-            ))),
-        }
-    }
 
     fn build_with_executor(
         max_capacity: Option<usize>,
@@ -376,51 +95,7 @@ impl PyVegaFusionRuntime {
             tokio_runtime: Arc::new(tokio_runtime_connection),
         })
     }
-    fn process_inline_datasets(
-        &self,
-        inline_datasets: Option<&Bound<PyDict>>,
-    ) -> PyResult<HashMap<String, VegaFusionDataset>> {
-        if let Some(inline_datasets) = inline_datasets {
-            Python::with_gil(|py| -> PyResult<_> {
-                let imported_datasets = inline_datasets
-                    .iter()
-                    .map(|(name, inline_dataset)| {
-                        let inline_dataset = inline_dataset;
-                        let dataset = if inline_dataset.hasattr("__arrow_c_stream__")? {
-                            // Import via Arrow PyCapsule Interface
-                            let (table, hash) =
-                                VegaFusionTable::from_pyarrow_with_hash(py, &inline_dataset)?;
-                            VegaFusionDataset::from_table(table, Some(hash))?
-                        } else if let Ok(pyschema) = inline_dataset.extract::<PySchema>() {
-                            // Handle PyArrow Schema as VegaFusionDataset::Plan
-                            let schema = pyschema.into_inner();
-                            // TODO: inline this method instead of having it on runtime
-                            self.runtime
-                                .create_dataset_from_schema(&name.to_string(), schema)
-                                .map_err(|e| {
-                                    PyValueError::new_err(format!(
-                                        "Failed to create dataset from schema: {}",
-                                        e
-                                    ))
-                                })?
-                        } else {
-                            // Assume PyArrow Table
-                            // We convert to ipc bytes for two reasons:
-                            // - It allows VegaFusionDataset to compute an accurate hash of the table
-                            // - It works around https://github.com/hex-inc/vegafusion/issues/268
-                            let table = VegaFusionTable::from_pyarrow(py, &inline_dataset)?;
-                            VegaFusionDataset::from_table_ipc_bytes(&table.to_ipc_bytes()?)?
-                        };
-
-                        Ok((name.to_string(), dataset))
-                    })
-                    .collect::<PyResult<HashMap<_, _>>>()?;
-                Ok(imported_datasets)
-            })
-        } else {
-            Ok(Default::default())
-        }
-    }
+    
 }
 
 #[pymethods]
@@ -433,7 +108,7 @@ impl PyVegaFusionRuntime {
         worker_threads: Option<i32>,
         executor: Option<PyObject>,
     ) -> PyResult<Self> {
-        let rust_executor = Self::select_executor_for_vendor(None, executor)?;
+        let rust_executor = select_executor_for_vendor(None, executor)?;
         Self::build_with_executor(max_capacity, memory_limit, worker_threads, rust_executor)
     }
 
@@ -446,7 +121,7 @@ impl PyVegaFusionRuntime {
         vendor: Option<String>,
         executor: Option<PyObject>,
     ) -> PyResult<Self> {
-        let rust_executor = Self::select_executor_for_vendor(vendor, executor)?;
+        let rust_executor = select_executor_for_vendor(vendor, executor)?;
         Self::build_with_executor(max_capacity, memory_limit, worker_threads, rust_executor)
     }
 
@@ -491,7 +166,7 @@ impl PyVegaFusionRuntime {
             default_input_tz: default_input_tz.clone(),
         };
 
-        let inline_datasets = self.process_inline_datasets(inline_datasets)?;
+        let inline_datasets = process_inline_datasets(inline_datasets)?;
 
         py.allow_threads(|| {
             PyChartState::try_new(
@@ -519,7 +194,7 @@ impl PyVegaFusionRuntime {
         keep_signals: Option<Vec<(String, Vec<u32>)>>,
         keep_datasets: Option<Vec<(String, Vec<u32>)>>,
     ) -> PyResult<(PyObject, PyObject)> {
-        let inline_datasets = self.process_inline_datasets(inline_datasets)?;
+        let inline_datasets = process_inline_datasets(inline_datasets)?;
 
         let spec = parse_json_spec(spec)?;
         let preserve_interactivity = preserve_interactivity.unwrap_or(false);
@@ -579,7 +254,7 @@ impl PyVegaFusionRuntime {
         row_limit: Option<u32>,
         inline_datasets: Option<&Bound<PyDict>>,
     ) -> PyResult<(PyObject, PyObject)> {
-        let inline_datasets = self.process_inline_datasets(inline_datasets)?;
+        let inline_datasets = process_inline_datasets(inline_datasets)?;
         let spec = parse_json_spec(spec)?;
 
         // Build variables
@@ -653,7 +328,7 @@ impl PyVegaFusionRuntime {
         keep_signals: Option<Vec<(String, Vec<u32>)>>,
         keep_datasets: Option<Vec<(String, Vec<u32>)>>,
     ) -> PyResult<(PyObject, Vec<PyObject>, PyObject)> {
-        let inline_datasets = self.process_inline_datasets(inline_datasets)?;
+        let inline_datasets = process_inline_datasets(inline_datasets)?;
         let spec = parse_json_spec(spec)?;
         let preserve_interactivity = preserve_interactivity.unwrap_or(true);
         let extract_threshold = extract_threshold.unwrap_or(20);
@@ -736,7 +411,6 @@ impl PyVegaFusionRuntime {
         })
     }
 
-    #[cfg(feature = "logical-plan")]
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (spec, local_tz, default_input_tz=None, preserve_interactivity=None, inline_datasets=None, keep_signals=None, keep_datasets=None))]
     pub fn pre_transform_logical_plan(
@@ -753,7 +427,7 @@ impl PyVegaFusionRuntime {
         let spec = parse_json_spec(spec)?;
         let preserve_interactivity = preserve_interactivity.unwrap_or(true);
 
-        let inline_datasets = self.process_inline_datasets(inline_datasets)?;
+        let inline_datasets = process_inline_datasets(inline_datasets)?;
 
         let mut keep_variables: Vec<PreTransformVariable> = Vec::new();
         for (name, scope) in keep_signals.unwrap_or_default() {
@@ -789,6 +463,7 @@ impl PyVegaFusionRuntime {
             let py_export_list = PyList::empty(py);
             for export_update in export_updates {
                 let py_export_dict = PyDict::new(py);
+                py_export_dict.set_item("namespace", pythonize::pythonize(py, &export_update.namespace)?)?;
                 py_export_dict.set_item("name", export_update.name)?;
 
                 match export_update.value {
@@ -830,26 +505,6 @@ impl PyVegaFusionRuntime {
 
             Ok((py_spec.into(), py_export_list.into(), py_warnings.into()))
         })
-    }
-
-    #[cfg(not(feature = "logical-plan"))]
-    #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (_spec, _inline_dataset_schemas, _local_tz, _default_input_tz=None, _preserve_interactivity=None, _keep_signals=None, _keep_datasets=None))]
-    pub fn pre_transform_logical_plan(
-        &self,
-        _py: Python,
-        _spec: PyObject,
-        _inline_dataset_schemas: Option<&Bound<PyDict>>,
-        _local_tz: String,
-        _default_input_tz: Option<String>,
-        _preserve_interactivity: Option<bool>,
-        _keep_signals: Option<Vec<(String, Vec<u32>)>>,
-        _keep_datasets: Option<Vec<(String, Vec<u32>)>>,
-    ) -> PyResult<(PyObject, PyObject, PyObject)> {
-        Err(PyValueError::new_err(
-            "pre_transform_logical_plan requires the 'logical-plan' feature. \
-            Please reinstall vegafusion with logical plan support enabled.",
-        ))
     }
 
     pub fn clear_cache(&self) -> PyResult<()> {
@@ -979,34 +634,3 @@ fn _vegafusion(_py: Python, m: &Bound<PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-/// Helper function to parse an input Python string or dict as a ChartSpec
-fn parse_json_spec(chart_spec: PyObject) -> PyResult<ChartSpec> {
-    Python::with_gil(|py| -> PyResult<ChartSpec> {
-        if let Ok(chart_spec) = chart_spec.extract::<Cow<str>>(py) {
-            match serde_json::from_str::<ChartSpec>(&chart_spec) {
-                Ok(chart_spec) => Ok(chart_spec),
-                Err(err) => Err(PyValueError::new_err(format!(
-                    "Failed to parse chart_spec string as Vega: {err}"
-                ))),
-            }
-        } else if let Ok(chart_spec) = chart_spec.downcast_bound::<PyAny>(py) {
-            match depythonize::<ChartSpec>(&chart_spec.clone()) {
-                Ok(chart_spec) => Ok(chart_spec),
-                Err(err) => Err(PyValueError::new_err(format!(
-                    "Failed to parse chart_spec dict as Vega: {err}"
-                ))),
-            }
-        } else {
-            Err(PyValueError::new_err("chart_spec must be a string or dict"))
-        }
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        let result = 2 + 2;
-        assert_eq!(result, 4);
-    }
-}

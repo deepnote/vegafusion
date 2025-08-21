@@ -8,7 +8,7 @@ use crate::{
     },
     proto::gen::{
         pretransform::PreTransformSpecWarning,
-        tasks::{NodeValueIndex, TaskGraph, TzConfig, Variable, VariableNamespace},
+        tasks::{NodeValueIndex, TaskGraph, TzConfig, Variable},
     },
     runtime::VegaFusionRuntimeTrait,
     spec::chart::ChartSpec,
@@ -189,26 +189,28 @@ impl ChartState {
             )
             .await?;
 
-        let mut response_updates = response_task_values
+        let export_updates: Vec<ExportUpdate> = response_task_values
             .into_iter()
             .map(|response_value| {
                 let variable = response_value.variable;
                 let scope = response_value.scope;
-                let value = response_value.value.as_materialized()?;
+                let value = response_value.value;
 
-                Ok(ExportUpdateJSON {
-                    namespace: match variable.ns() {
-                        VariableNamespace::Signal => ExportUpdateNamespace::Signal,
-                        VariableNamespace::Data => ExportUpdateNamespace::Data,
-                        VariableNamespace::Scale => {
-                            return Err(VegaFusionError::internal("Unexpected scale variable"))
-                        }
-                    },
-                    name: variable.name.clone(),
-                    scope: scope.clone(),
-                    value: value.to_json()?,
-                })
+                ExportUpdate {
+                    namespace: ExportUpdateNamespace::try_from(variable.ns()).unwrap(),
+                    name: variable.name,
+                    scope,
+                    value,
+                }
             })
+            .collect();
+
+        // Materialize all updates once, outside of the iterator closure
+        let materialized_updates = runtime.materialize_export_updates(export_updates).await?;
+
+        let mut response_updates = materialized_updates
+            .into_iter()
+            .map(|u| u.to_json())
             .collect::<Result<Vec<_>>>()?;
 
         // Sort for deterministic ordering

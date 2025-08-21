@@ -12,9 +12,7 @@ import vegafusion as vf
 import pyarrow as pa
 from typing import Optional
 
-# TODO: cleanup this file
 
-# Root directory that contains the Vega-Lite spec fixtures used by this test suite
 SPEC_ROOT = (Path(__file__).parent / "specs").resolve()
 SALES_DATA_PATH = SPEC_ROOT / "sales_data_1kk.parquet"
 SALES_DATA_DF = pd.read_parquet(SALES_DATA_PATH)
@@ -85,12 +83,14 @@ def test_spec_against_spark(spec_path: Path, spark: SparkSession):
     vega_spec = vlc.vegalite_to_vega(vegalite_spec)
 
     print("Generating Pandas-based transformed spec")
-    pandas_spec, _ = vf.runtime.pre_transform_spec(
+    inmemory_spec, inmemory_datasets, _ = vf.runtime.pre_transform_extract(
         spec=vega_spec,
+        preserve_interactivity=False,
         local_tz="UTC",
         default_input_tz="UTC",
-        preserve_interactivity=False,
         inline_datasets={"sales_data_1kk": SALES_DATA_DF},
+        extract_threshold=0,
+        extracted_format="pyarrow"
     )
 
     print("Generating Spark-backed results via custom executor")
@@ -98,18 +98,36 @@ def test_spec_against_spark(spec_path: Path, spark: SparkSession):
     def spark_executor(sql_query: str) -> pa.Table:
         spark_df = spark.sql(sql_query)
         return pa.Table.from_pandas(spark_df.toPandas())
+    
+    vf_spark_runtime = vf.VegaFusionRuntime.new_vendor('sparksql', spark_executor)
 
     sales_schema = to_arrow_schema(spark.table("sales_data_1kk").schema)
 
-    spark_spec, _ = vf.runtime.pre_transform_spec_vendor(
+    spark_spec, spark_datasets, _ = vf_spark_runtime.pre_transform_extract(
         spec=vega_spec,
-        output_format="sparksql",
-        executor=spark_executor,
+        preserve_interactivity=False,
         local_tz="UTC",
         default_input_tz="UTC",
-        preserve_interactivity=False,
         inline_datasets={"sales_data_1kk": sales_schema},
+        extract_threshold=0,
+        extracted_format="pyarrow"
     )
 
     print("Comparing transformed specs (Pandas vs Spark)")
-    assert pandas_spec == spark_spec
+
+    assert spark_spec == inmemory_spec
+
+    for inmemory_ds, spark_ds in zip(inmemory_datasets, spark_datasets):
+        inmemory_name, _, inmemory_data = inmemory_ds
+        spark_name, _, spark_data = spark_ds
+
+        assert inmemory_name == spark_name
+
+        pd.testing.assert_frame_equal(
+            inmemory_data.to_pandas(),
+            spark_data.to_pandas(),
+            check_dtype=False,
+            check_like=True,
+            atol=1e-6,
+            rtol=1e-6,
+        )
