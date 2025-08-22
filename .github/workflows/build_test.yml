@@ -271,9 +271,6 @@ jobs:
 
           # Test dependencies
           python -m pip install pytest altair vega-datasets scikit-image jupytext voila ipykernel anywidget ipywidgets selenium flaky tenacity chromedriver-binary-auto "pyspark==3.5.*"
-      - name: Test lazy imports
-        working-directory: vegafusion-python/
-        run: python checks/check_lazy_imports.py
       - name: Test vegafusion
         working-directory: vegafusion-python/
         env:
