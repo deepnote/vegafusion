@@ -275,9 +275,8 @@ jobs:
         working-directory: vegafusion-python/
         env:
           VEGAFUSION_TEST_HEADLESS: 1
-        
-        # Excluding particular test file as it tends to hang on CI
-        run: pytest -vv -rA -k 'not tests/test_jupyter_widget.py'
+        # Exclude the widget tests on CI to avoid hangs
+        run: pytest -vv -rA --ignore=tests/test_jupyter_widget.py
       - name: Upload test artifacts
         uses: actions/upload-artifact@v4.4.3
         if: failure()
