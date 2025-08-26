@@ -1,4 +1,5 @@
-use crate::proto::gen::tasks::task_value::Data;
+use crate::proto::gen::tasks::materialized_task_value::Data as MaterializedTaskValueData;
+use crate::proto::gen::tasks::task_value::Data as TaskValueData;
 use crate::proto::gen::tasks::ResponseTaskValue;
 use crate::proto::gen::tasks::{
     MaterializedTaskValue as ProtoMaterializedTaskValue, TaskGraphValueResponse,
@@ -109,8 +110,8 @@ impl TryFrom<&ProtoTaskValue> for TaskValue {
 
     fn try_from(value: &ProtoTaskValue) -> std::result::Result<Self, Self::Error> {
         match value.data.as_ref().unwrap() {
-            Data::Table(value) => Ok(Self::Table(VegaFusionTable::from_ipc_bytes(value)?)),
-            Data::Scalar(value) => {
+            TaskValueData::Table(value) => Ok(Self::Table(VegaFusionTable::from_ipc_bytes(value)?)),
+            TaskValueData::Scalar(value) => {
                 let scalar_table = VegaFusionTable::from_ipc_bytes(value)?;
                 let scalar_rb = scalar_table.to_record_batch()?;
                 let scalar_array = scalar_rb.column(0);
@@ -120,7 +121,7 @@ impl TryFrom<&ProtoTaskValue> for TaskValue {
             // TODO: we could use datafusion_proto::bytes::logical_plan_from_bytes here, but that
             // requires adding datafusion_proto to vegafusion-core deps, as well as passing
             // datafusion session (maybe empty one?) to unserialize plan
-            Data::Plan(_value) => Err(VegaFusionError::internal(
+            TaskValueData::Plan(_value) => Err(VegaFusionError::internal(
                 "Deserialization of Plan TaskValue not yet implemented",
             )),
         }
@@ -137,11 +138,11 @@ impl TryFrom<&TaskValue> for ProtoTaskValue {
                 let scalar_rb = RecordBatch::try_from_iter(vec![("value", scalar_array)])?;
                 let ipc_bytes = VegaFusionTable::from(scalar_rb).to_ipc_bytes()?;
                 Ok(Self {
-                    data: Some(Data::Scalar(ipc_bytes)),
+                    data: Some(TaskValueData::Scalar(ipc_bytes)),
                 })
             }
             TaskValue::Table(table) => Ok(Self {
-                data: Some(Data::Table(table.to_ipc_bytes()?)),
+                data: Some(TaskValueData::Table(table.to_ipc_bytes()?)),
             }),
             // TODO: we could use datafusion_proto::bytes::logical_plan_to_bytes here, but that
             // requires adding datafusion_proto to vegafusion-core deps, as well as passing
@@ -149,26 +150,6 @@ impl TryFrom<&TaskValue> for ProtoTaskValue {
             TaskValue::Plan(_) => Err(VegaFusionError::internal(
                 "Cannot convert Plan TaskValue to protobuf representation",
             )),
-        }
-    }
-}
-
-impl TryFrom<&MaterializedTaskValue> for ProtoTaskValue {
-    type Error = VegaFusionError;
-
-    fn try_from(value: &MaterializedTaskValue) -> std::result::Result<Self, Self::Error> {
-        match value {
-            MaterializedTaskValue::Scalar(scalar) => {
-                let scalar_array = scalar.to_array()?;
-                let scalar_rb = RecordBatch::try_from_iter(vec![("value", scalar_array)])?;
-                let ipc_bytes = VegaFusionTable::from(scalar_rb).to_ipc_bytes()?;
-                Ok(Self {
-                    data: Some(Data::Scalar(ipc_bytes)),
-                })
-            }
-            MaterializedTaskValue::Table(table) => Ok(Self {
-                data: Some(Data::Table(table.to_ipc_bytes()?)),
-            }),
         }
     }
 }
@@ -183,17 +164,11 @@ impl TryFrom<&MaterializedTaskValue> for ProtoMaterializedTaskValue {
                 let scalar_rb = RecordBatch::try_from_iter(vec![("value", scalar_array)])?;
                 let ipc_bytes = VegaFusionTable::from(scalar_rb).to_ipc_bytes()?;
                 Ok(Self {
-                    data: Some(
-                        crate::proto::gen::tasks::materialized_task_value::Data::Scalar(ipc_bytes),
-                    ),
+                    data: Some(MaterializedTaskValueData::Scalar(ipc_bytes)),
                 })
             }
             MaterializedTaskValue::Table(table) => Ok(Self {
-                data: Some(
-                    crate::proto::gen::tasks::materialized_task_value::Data::Table(
-                        table.to_ipc_bytes()?,
-                    ),
-                ),
+                data: Some(MaterializedTaskValueData::Table(table.to_ipc_bytes()?)),
             }),
         }
     }
@@ -203,19 +178,17 @@ impl TryFrom<&ProtoMaterializedTaskValue> for TaskValue {
     type Error = VegaFusionError;
 
     fn try_from(value: &ProtoMaterializedTaskValue) -> std::result::Result<Self, Self::Error> {
-        match &value.data {
-            Some(crate::proto::gen::tasks::materialized_task_value::Data::Scalar(bytes)) => {
-                let table = VegaFusionTable::from_ipc_bytes(bytes)?;
-                let scalar = table.to_scalar_value()?;
-                Ok(TaskValue::Scalar(scalar))
+        match value.data.as_ref().unwrap() {
+            MaterializedTaskValueData::Table(value) => {
+                Ok(Self::Table(VegaFusionTable::from_ipc_bytes(value)?))
             }
-            Some(crate::proto::gen::tasks::materialized_task_value::Data::Table(bytes)) => {
-                let table = VegaFusionTable::from_ipc_bytes(bytes)?;
-                Ok(TaskValue::Table(table))
+            MaterializedTaskValueData::Scalar(value) => {
+                let scalar_table = VegaFusionTable::from_ipc_bytes(value)?;
+                let scalar_rb = scalar_table.to_record_batch()?;
+                let scalar_array = scalar_rb.column(0);
+                let scalar = ScalarValue::try_from_array(scalar_array, 0)?;
+                Ok(Self::Scalar(scalar))
             }
-            None => Err(VegaFusionError::internal(
-                "MaterializedTaskValue data is None",
-            )),
         }
     }
 }

@@ -335,7 +335,7 @@ class VegaFusionRuntime:
             ):
                 # Handle PyArrow Schema - convert to arro3 Schema
                 # This allows for planning without requiring actual data
-                imported_inline_datasets[name] = Schema.from_arrow(value)  # type: ignore[arg-type]
+                imported_inline_datasets[name] = Schema.from_arrow(value)
             elif pd is not None and pa is not None and isinstance(value, pd.DataFrame):
                 # rename to help mypy
                 inner_value: pd.DataFrame = value
@@ -395,11 +395,11 @@ class VegaFusionRuntime:
                             raise ValueError(msg)
                         df_nw = df_nw.select(columns)
 
-                    imported_inline_datasets[name] = Table(df_nw)  # type: ignore[arg-type]
+                    imported_inline_datasets[name] = Table(df_nw)
                 except TypeError:
                     # Not supported by Narwhals, try pycapsule interface directly
                     if hasattr(value, "__arrow_c_stream__"):
-                        imported_inline_datasets[name] = Table(value)  # type: ignore[call-overload]
+                        imported_inline_datasets[name] = Table(value)
                     else:
                         raise
 
