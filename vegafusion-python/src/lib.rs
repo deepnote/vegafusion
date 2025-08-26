@@ -32,7 +32,7 @@ use vegafusion_core::planning::projection_pushdown::get_column_usage as rs_get_c
 use vegafusion_core::planning::watch::WatchPlan;
 
 use vegafusion_core::task_graph::graph::ScopedVariable;
-use vegafusion_core::task_graph::task_value::TaskValue;
+use vegafusion_core::task_graph::task_value::{MaterializedTaskValue, TaskValue};
 use vegafusion_runtime::tokio_runtime::TOKIO_THREAD_STACK_SIZE;
 
 use vegafusion_core::runtime::{PlanExecutor, VegaFusionRuntimeTrait};
@@ -295,7 +295,7 @@ impl PyVegaFusionRuntime {
         Python::with_gil(|py| -> PyResult<(PyObject, PyObject)> {
             let py_response_list = PyList::empty(py);
             for value in values {
-                let pytable: PyObject = if let TaskValue::Table(table) = value {
+                let pytable: PyObject = if let MaterializedTaskValue::Table(table) = value {
                     table.to_pyo3_arrow()?.to_pyarrow(py)?.into()
                 } else {
                     return Err(PyErr::from(VegaFusionError::internal(
@@ -470,7 +470,7 @@ impl PyVegaFusionRuntime {
                     TaskValue::Plan(plan) => {
                         // TODO: we probably want more flexible serialization format than pg_json, but protobuf
                         // fails with our memtable (possibly fixed in DataFusion 49)
-                        let lp_str = format!("{}", plan.display_pg_json());
+                        let lp_str = plan.display_pg_json().to_string();
                         py_export_dict.set_item("logical_plan", PyString::new(py, &lp_str))?;
                     }
                     TaskValue::Table(table) => {

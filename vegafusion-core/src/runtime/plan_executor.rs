@@ -17,7 +17,7 @@ pub struct NoOpPlanExecutor;
 impl PlanExecutor for NoOpPlanExecutor {
     async fn execute_plan(&self, _plan: LogicalPlan) -> Result<VegaFusionTable> {
         Err(VegaFusionError::internal(
-            "Plan execution not implemented for this executor",
+            "NoOpPlanExecutor cannot execute logical plans. Provide a concrete PlanExecutor (e.g., DataFusionPlanExecutor).",
         ))
     }
 }

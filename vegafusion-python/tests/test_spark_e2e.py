@@ -117,6 +117,11 @@ def test_spec_against_spark(spec_path: Path, spark: SparkSession):
 
     assert spark_spec == inmemory_spec
 
+    assert len(inmemory_datasets) == len(spark_datasets), (
+        f"Dataset count mismatch: in-memory={len(inmemory_datasets)} "
+        f"vs spark={len(spark_datasets)}"
+    )
+
     for inmemory_ds, spark_ds in zip(inmemory_datasets, spark_datasets):
         inmemory_name, _, inmemory_data = inmemory_ds
         spark_name, _, spark_data = spark_ds

@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use datafusion::datasource::empty::EmptyTable;
 use datafusion::datasource::provider_as_source;
-use pyo3::exceptions::PyValueError;
 use pyo3::exceptions::PyValueError as PyValErr;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -40,14 +39,14 @@ pub fn process_inline_datasets(
                         let logical_plan =
                             LogicalPlanBuilder::scan(&name.to_string(), table_source, None)
                                 .map_err(|e| {
-                                    PyValueError::new_err(format!(
+                                    PyValErr::new_err(format!(
                                         "Failed to build logical plan from schema: {}",
                                         e
                                     ))
                                 })?
                                 .build()
                                 .map_err(|e| {
-                                    PyValueError::new_err(format!(
+                                    PyValErr::new_err(format!(
                                         "Failed to finalize logical plan from schema: {}",
                                         e
                                     ))

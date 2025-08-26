@@ -17,9 +17,24 @@ message TaskValue {
    */
     bytes table = 2;
   /*
-   * Serialized LogicalPlan
+   * Serialized DataFusion LogicalPlan in protobuf format
    */
    bytes plan = 3;
+  }
+}
+
+// ## Materialized Task Value
+message MaterializedTaskValue {
+  oneof data {
+  /*
+   * Representation of scalar as single column, single row, record batch in Arrow IPC format
+   */
+    bytes scalar = 1;
+
+  /*
+   * Serialized Arrow record batch in Arrow IPC format
+   */
+    bytes table = 2;
   }
 }
 
@@ -160,8 +175,7 @@ message TaskGraphValueRequest {
 message ResponseTaskValue {
   Variable variable = 1;
   repeated uint32 scope = 2;
-  // TODO: this should be MaterializedTaskValue
-  TaskValue value = 3;
+  MaterializedTaskValue value = 3;
 }
 
 message TaskGraphValueResponse {

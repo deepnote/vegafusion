@@ -23,7 +23,7 @@ impl PlanExecutor for PythonPlanExecutor {
         &self,
         plan: LogicalPlan,
     ) -> vegafusion_common::error::Result<VegaFusionTable> {
-        let plan_str = format!("{}", plan.display_pg_json());
+        let plan_str = plan.display_pg_json().to_string();
 
         let python_executor = &self.python_executor;
         let result = tokio::task::spawn_blocking({

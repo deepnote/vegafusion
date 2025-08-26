@@ -148,11 +148,10 @@ pub fn compile_call(
                                 let tz_config = config.tz_config.with_context(|| {
                                     "No local timezone info provided".to_string()
                                 })?;
-
                                 callee(table, &node.arguments[1..], schema, &tz_config)
                             } else {
-                                // Should we try to materialize dataset through executor?
-                                Err(VegaFusionError::internal(format!(
+                                // TODO: If a plan executor is available in config, try to materialize here.
+                                Err(VegaFusionError::compilation(format!(
                                     "Dataset {} is not materialized as table",
                                     name
                                 )))

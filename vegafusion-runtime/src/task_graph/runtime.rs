@@ -14,13 +14,12 @@ use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use vegafusion_core::data::dataset::VegaFusionDataset;
 use vegafusion_core::error::{Result, ResultWithContext, VegaFusionError};
-use vegafusion_core::planning::watch::{ExportUpdate, ExportUpdateArrow};
 use vegafusion_core::proto::gen::tasks::inline_dataset::Dataset;
 use vegafusion_core::proto::gen::tasks::{
     task::TaskKind, InlineDataset, InlineDatasetTable, NodeValueIndex, TaskGraph,
 };
+use vegafusion_core::runtime::PlanExecutor;
 use vegafusion_core::runtime::VegaFusionRuntimeTrait;
-use vegafusion_core::runtime::{materialize_export_updates_with_executor, PlanExecutor};
 use vegafusion_core::task_graph::task_value::{NamedTaskValue, TaskValue};
 
 #[cfg(feature = "proto")]
@@ -62,7 +61,7 @@ impl VegaFusionRuntime {
     ) -> Result<TaskValue> {
         // We shouldn't panic inside get_or_compute_node_value, but since this may be used
         // in a server context, wrap in catch_unwind just in case.
-        let executor = plan_executor.unwrap_or_else(|| self.plan_executor.clone());
+        let executor = plan_executor.unwrap_or_else(|| self.plan_executor());
         let node_value = AssertUnwindSafe(get_or_compute_node_value(
             task_graph,
             node_value_index.node_index as usize,
@@ -89,10 +88,20 @@ impl VegaFusionRuntime {
     }
 }
 
+impl Default for VegaFusionRuntime {
+    fn default() -> Self {
+        Self::new(None, None)
+    }
+}
+
 #[async_trait::async_trait]
 impl VegaFusionRuntimeTrait for VegaFusionRuntime {
     fn as_any(&self) -> &dyn Any {
         self
+    }
+
+    fn plan_executor(&self) -> Arc<dyn PlanExecutor> {
+        self.plan_executor.clone()
     }
 
     async fn query_request(
@@ -127,7 +136,7 @@ impl VegaFusionRuntimeTrait for VegaFusionRuntime {
                 // Clone task_graph and task_graph_runtime for use in closure
                 let task_graph_runtime = task_graph_runtime.clone();
                 let task_graph = task_graph.clone();
-                let plan_executor_clone = self.plan_executor.clone();
+                let plan_executor_clone = self.plan_executor();
 
                 Ok(async move {
                     let value = task_graph_runtime
@@ -150,15 +159,6 @@ impl VegaFusionRuntimeTrait for VegaFusionRuntime {
             .collect::<Result<Vec<_>>>()?;
 
         future::try_join_all(response_value_futures).await
-    }
-
-    async fn materialize_export_updates(
-        &self,
-        export_updates: Vec<ExportUpdate>,
-    ) -> Result<Vec<ExportUpdateArrow>> {
-        let executor = self.plan_executor.clone();
-
-        materialize_export_updates_with_executor(executor, export_updates).await
     }
 }
 

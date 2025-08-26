@@ -3,6 +3,7 @@ use datafusion::sql::unparser::Unparser;
 use datafusion_common::tree_node::{Transformed, TreeNode};
 use datafusion_common::{Column, ScalarValue};
 use datafusion_expr::{expr::ScalarFunction, Expr, LogicalPlan};
+use lazy_static::lazy_static;
 use regex;
 use sqlparser::ast::{self, visit_expressions_mut};
 use std::collections::HashMap;
@@ -58,9 +59,22 @@ fn rewrite_row_number(statement: &mut ast::Statement) {
                 if let Some(ast::WindowType::WindowSpec(ref mut window_spec)) = &mut func.over {
                     window_spec.window_frame = None;
                     window_spec.order_by = vec![ast::OrderByExpr {
-                        expr: ast::Expr::Identifier(ast::Ident::new(
-                            "monotonically_increasing_id()",
-                        )),
+                        expr: ast::Expr::Function(ast::Function {
+                            name: ast::ObjectName::from(vec![ast::Ident::new(
+                                "monotonically_increasing_id",
+                            )]),
+                            args: ast::FunctionArguments::List(ast::FunctionArgumentList {
+                                duplicate_treatment: None,
+                                args: vec![],
+                                clauses: vec![],
+                            }),
+                            filter: None,
+                            null_treatment: None,
+                            over: None,
+                            within_group: vec![],
+                            uses_odbc_syntax: false,
+                            parameters: ast::FunctionArguments::None,
+                        }),
                         options: ast::OrderByOptions {
                             asc: None,
                             nulls_first: None,
@@ -192,6 +206,22 @@ fn rewrite_intervals(statement: &mut ast::Statement) {
     });
 }
 
+lazy_static! {
+    /// Precompiled regexes for expanding interval abbreviations
+    static ref INTERVAL_ABBREV_REGEXES: Vec<(regex::Regex, &'static str)> = vec![
+        (regex::Regex::new(r"\b(\d+)\s+MONS\b").unwrap(), "${1} MONTHS"),
+        (regex::Regex::new(r"\b(\d+)\s+MON\b").unwrap(), "${1} MONTH"),
+        (regex::Regex::new(r"\b(\d+)\s+MINS\b").unwrap(), "${1} MINUTES"),
+        (regex::Regex::new(r"\b(\d+)\s+MIN\b").unwrap(), "${1} MINUTE"),
+        (regex::Regex::new(r"\b(\d+)\s+SECS\b").unwrap(), "${1} SECONDS"),
+        (regex::Regex::new(r"\b(\d+)\s+SEC\b").unwrap(), "${1} SECOND"),
+        (regex::Regex::new(r"\b(\d+)\s+HRS\b").unwrap(), "${1} HOURS"),
+        (regex::Regex::new(r"\b(\d+)\s+HR\b").unwrap(), "${1} HOUR"),
+        (regex::Regex::new(r"\b(\d+)\s+YRS\b").unwrap(), "${1} YEARS"),
+        (regex::Regex::new(r"\b(\d+)\s+YR\b").unwrap(), "${1} YEAR"),
+    ];
+}
+
 /// Ensure nested IS NULL/IS NOT NULL predicates are parenthesized for Spark compatibility
 /// e.g. `col IS NULL IS NULL` -> `(col IS NULL) IS NULL`
 fn rewrite_nested_is_null(statement: &mut ast::Statement) {
@@ -211,27 +241,9 @@ fn rewrite_nested_is_null(statement: &mut ast::Statement) {
 
 /// Expand interval abbreviations to full names for Spark compatibility
 fn expand_interval_abbreviations(interval_str: &str) -> String {
-    // Use regex to match number followed by abbreviated unit
-    // This ensures we only replace actual interval units, not parts of other words
-    let patterns = [
-        (r"\b(\d+)\s+MONS\b", "${1} MONTHS"),
-        (r"\b(\d+)\s+MON\b", "${1} MONTH"),
-        (r"\b(\d+)\s+MINS\b", "${1} MINUTES"),
-        (r"\b(\d+)\s+MIN\b", "${1} MINUTE"),
-        (r"\b(\d+)\s+SECS\b", "${1} SECONDS"),
-        (r"\b(\d+)\s+SEC\b", "${1} SECOND"),
-        (r"\b(\d+)\s+HRS\b", "${1} HOURS"),
-        (r"\b(\d+)\s+HR\b", "${1} HOUR"),
-        (r"\b(\d+)\s+YRS\b", "${1} YEARS"),
-        (r"\b(\d+)\s+YR\b", "${1} YEAR"),
-    ];
-
     let mut result = interval_str.to_string();
-    for (pattern, replacement) in patterns {
-        result = regex::Regex::new(pattern)
-            .unwrap()
-            .replace_all(&result, replacement)
-            .to_string();
+    for (re, replacement) in INTERVAL_ABBREV_REGEXES.iter() {
+        result = re.replace_all(&result, *replacement).to_string();
     }
     result
 }
@@ -428,7 +440,7 @@ fn chrono_to_spark(fmt: &str) -> Result<String> {
             }
 
             // -------- time-zone offsets --------
-            'z' if modifier == ":" => out.push_str("XXX"), // %:z -> +09:30 :contentReference[oaicite:0]{index=0}
+            'z' if modifier == ":" => out.push_str("XXX"), // %:z -> +09:30
             'z' if modifier == "::" => out.push_str("XXXXX"), // %::z -> +09:30:00
             'z' if modifier == ":::" => out.push_str("X"), // %:::z -> +09
             'z' => out.push_str("Z"),                      // %z  -> +0930

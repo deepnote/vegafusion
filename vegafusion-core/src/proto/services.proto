@@ -10,6 +10,7 @@ service VegaFusionRuntime {
   rpc PreTransformSpec(pretransform.PreTransformSpecRequest) returns (PreTransformSpecResult) {}
   rpc PreTransformValues(pretransform.PreTransformValuesRequest) returns (PreTransformValuesResult) {}
   rpc PreTransformExtract(pretransform.PreTransformExtractRequest) returns (PreTransformExtractResult) {}
+  rpc PreTransformLogicalPlan(pretransform.PreTransformLogicalPlanRequest) returns (PreTransformLogicalPlanResult) {}
 }
 
 message QueryRequest {
@@ -43,5 +44,12 @@ message PreTransformExtractResult {
   oneof result {
     errors.Error error = 1;
     pretransform.PreTransformExtractResponse response = 2;
+  }
+}
+
+message PreTransformLogicalPlanResult {
+  oneof result {
+    errors.Error error = 1;
+    pretransform.PreTransformLogicalPlanResponse response = 2;
   }
 }

@@ -62,8 +62,6 @@ jobs:
           path: |
             vegafusion-runtime/tests/output
 
-  
-
   check-vegafusion-python:
     runs-on: ubuntu-22.04
     steps:
@@ -286,10 +284,6 @@ jobs:
           path: |
             vegafusion-python/tests/output/*
 
-  
-
-  
-
   # Bundle all python wheels into a single artifact for easier downloading
   bundle-vegafusion-python-wheels:
     needs: [
@@ -297,7 +291,7 @@ jobs:
         build-vegafusion-python-linux-arm64,
         build-vegafusion-python-osx-64,
 
-        # job that test the wheels
+        # job that tests the wheels
         test-vegafusion-python-linux-64,
       ]
     runs-on: ubuntu-latest

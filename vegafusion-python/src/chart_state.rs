@@ -61,11 +61,11 @@ impl PyChartState {
                 .block_on(self.state.update(self.runtime.as_ref(), updates))
         })?;
 
-        let a = result_updates
+        let py_updates = result_updates
             .into_iter()
             .map(|el| Ok(pythonize(py, &el)?.into()))
             .collect::<PyResult<Vec<PyObject>>>()?;
-        Ok(a)
+        Ok(py_updates)
     }
 
     /// Get ChartState's initial input spec
@@ -102,6 +102,6 @@ impl PyChartState {
             .iter()
             .map(PreTransformSpecWarningSpec::from)
             .collect();
-        Ok(pythonize::pythonize(py, &warnings)?.into())
+        Ok(pythonize(py, &warnings)?.into())
     }
 }
