@@ -5171,7 +5171,6 @@ dependencies = [
  "clap",
  "datafusion",
  "futures",
- "futures-util",
  "h2 0.3.27",
  "predicates",
  "prost",

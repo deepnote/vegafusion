@@ -9,7 +9,7 @@ use vegafusion_core::{
     chart_state::{ChartState as RsChartState, ChartStateOpts},
     data::dataset::VegaFusionDataset,
     planning::{plan::PreTransformSpecWarningSpec, watch::WatchPlan},
-    proto::r#gen::tasks::TzConfig,
+    proto::gen::tasks::TzConfig,
     runtime::VegaFusionRuntimeTrait,
     spec::chart::ChartSpec,
 };
@@ -53,7 +53,7 @@ impl PyChartState {
     pub fn update(&self, py: Python, updates: Vec<PyObject>) -> PyResult<Vec<PyObject>> {
         let updates = updates
             .into_iter()
-            .map(|el| Ok(depythonize::<ExportUpdateJSON>(&el.bind(py).clone())?))
+            .map(|el| Ok(depythonize::<ExportUpdateJSON>(&el.bind(py))?))
             .collect::<PyResult<Vec<_>>>()?;
 
         let result_updates = py.allow_threads(|| {
