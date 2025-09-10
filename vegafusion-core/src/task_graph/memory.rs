@@ -97,7 +97,7 @@ pub fn inner_size_of_table(value: &VegaFusionTable) -> usize {
 }
 
 pub fn inner_size_of_logical_plan(plan: &LogicalPlan) -> usize {
-    size_of_val(&plan)
+    size_of_val(plan)
         + plan
             .inputs()
             .iter()

@@ -29,7 +29,7 @@ def main():
         ]
     )
     transformed_spec, data, warnings = vf.runtime.pre_transform_logical_plan(
-        spec, inline_datasets={"movies": schema}, datafusion_ctx=SessionContext()
+        spec, inline_datasets={"movies": schema},
     )
     for dataset in data:
         print("Dataset", dataset["name"])

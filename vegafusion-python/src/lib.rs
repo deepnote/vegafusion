@@ -469,7 +469,8 @@ impl PyVegaFusionRuntime {
                 match export_update.value {
                     TaskValue::Plan(plan) => {
                         // TODO: we probably want more flexible serialization format than pg_json, but protobuf
-                        // fails with our memtable (possibly fixed in DataFusion 49)
+                        // fails with our memtable, we're likely need to provide custom serializator
+                        // and deserializator for it? Or it's a bug in DataFusion
                         let lp_str = plan.display_pg_json().to_string();
                         py_export_dict.set_item("logical_plan", PyString::new(py, &lp_str))?;
                     }

@@ -77,7 +77,6 @@ def load_and_register_movies_data(spark: SparkSession) -> pa.Schema:
     spark_df.createOrReplaceTempView("movies")
     print("✅ Movies data registered as 'movies' table in Spark")
 
-    arrow_schema = spark_df.schema.json()
     pandas_df_clean = spark_df.toPandas()
     arrow_schema = pa.Schema.from_pandas(pandas_df_clean)
     return arrow_schema
