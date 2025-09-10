@@ -8,12 +8,15 @@ use vegafusion_core::proto::gen::services::vega_fusion_runtime_server::{
     VegaFusionRuntimeServer as TonicVegaFusionRuntimeServer,
 };
 use vegafusion_core::proto::gen::services::{
-    pre_transform_extract_result, pre_transform_spec_result, pre_transform_values_result,
-    query_request, query_result, PreTransformExtractResult, PreTransformSpecResult,
-    PreTransformValuesResult, QueryRequest, QueryResult,
+    pre_transform_extract_result, pre_transform_logical_plan_result, pre_transform_spec_result,
+    pre_transform_values_result, query_request, query_result, PreTransformExtractResult,
+    PreTransformLogicalPlanResult, PreTransformSpecResult, PreTransformValuesResult, QueryRequest,
+    QueryResult,
 };
 use vegafusion_core::proto::gen::tasks::TaskGraphValueResponse;
-use vegafusion_core::proto::gen::tasks::{ResponseTaskValue, TaskValue as ProtoTaskValue};
+use vegafusion_core::proto::gen::tasks::{
+    MaterializedTaskValue as ProtoMaterializedTaskValue, ResponseTaskValue,
+};
 use vegafusion_core::runtime::VegaFusionRuntimeTrait;
 use vegafusion_core::spec::chart::ChartSpec;
 use vegafusion_core::task_graph::graph::ScopedVariable;
@@ -22,9 +25,11 @@ use vegafusion_runtime::task_graph::runtime::{decode_inline_datasets, VegaFusion
 use clap::Parser;
 use regex::Regex;
 use vegafusion_core::proto::gen::pretransform::{
-    PreTransformExtractDataset, PreTransformExtractRequest, PreTransformExtractResponse,
-    PreTransformSpecOpts, PreTransformSpecRequest, PreTransformSpecResponse,
-    PreTransformValuesOpts, PreTransformValuesRequest, PreTransformValuesResponse,
+    ExportUpdate, PreTransformExtractDataset, PreTransformExtractRequest,
+    PreTransformExtractResponse, PreTransformLogicalPlanOpts, PreTransformLogicalPlanRequest,
+    PreTransformLogicalPlanResponse, PreTransformSpecOpts, PreTransformSpecRequest,
+    PreTransformSpecResponse, PreTransformValuesOpts, PreTransformValuesRequest,
+    PreTransformValuesResponse,
 };
 use vegafusion_runtime::task_graph::cache::VegaFusionCache;
 use vegafusion_runtime::tokio_runtime::TOKIO_THREAD_STACK_SIZE;
@@ -59,13 +64,45 @@ impl VegaFusionRuntimeGrpc {
                     .await
                 {
                     Ok(response_values) => {
+                        // Materialize all TaskValues before converting to protobuf
+                        let materialized_futures: Vec<_> = response_values
+                            .into_iter()
+                            .map(|named_value| {
+                                let executor = self.runtime.plan_executor.clone();
+                                async move {
+                                    let materialized_value =
+                                        named_value.value.to_materialized(executor).await?;
+                                    Ok::<_, VegaFusionError>(
+                                        vegafusion_core::proto::gen::tasks::ResponseTaskValue {
+                                            variable: Some(named_value.variable),
+                                            scope: named_value.scope,
+                                            value: Some(ProtoMaterializedTaskValue::try_from(
+                                                &materialized_value,
+                                            )?),
+                                        },
+                                    )
+                                }
+                            })
+                            .collect();
+                        let materialized_response_values =
+                            match futures::future::try_join_all(materialized_futures).await {
+                                Ok(v) => v,
+                                Err(e) => {
+                                    let response_msg = QueryResult {
+                                        response: Some(query_result::Response::Error(Error {
+                                            errorkind: Some(Errorkind::Error(
+                                                TaskGraphValueError { msg: e.to_string() },
+                                            )),
+                                        })),
+                                    };
+                                    return Ok(response_msg);
+                                }
+                            };
+
                         let response_msg = QueryResult {
                             response: Some(query_result::Response::TaskGraphValues(
                                 TaskGraphValueResponse {
-                                    response_values: response_values
-                                        .into_iter()
-                                        .map(|v| v.into())
-                                        .collect::<Vec<_>>(),
+                                    response_values: materialized_response_values,
                                 },
                             )),
                         };
@@ -210,14 +247,14 @@ impl VegaFusionRuntimeGrpc {
             .iter()
             .zip(&variables)
             .map(|(value, var)| {
-                let proto_value = ProtoTaskValue::try_from(value)?;
-                Ok(ResponseTaskValue {
+                let proto_value = ProtoMaterializedTaskValue::try_from(value)?;
+                Ok::<_, VegaFusionError>(ResponseTaskValue {
                     variable: Some(var.0.clone()),
                     scope: var.1.clone(),
                     value: Some(proto_value),
                 })
             })
-            .collect::<Result<Vec<_>, VegaFusionError>>()?;
+            .collect::<Result<Vec<_>, _>>()?;
 
         // Build result
         let result = PreTransformValuesResult {
@@ -230,6 +267,63 @@ impl VegaFusionRuntimeGrpc {
         };
 
         Ok(result)
+    }
+
+    async fn pre_transform_logical_plan_request(
+        &self,
+        request: PreTransformLogicalPlanRequest,
+    ) -> Result<PreTransformLogicalPlanResult, VegaFusionError> {
+        let opts = request.opts.unwrap_or_else(|| PreTransformLogicalPlanOpts {
+            local_tz: "UTC".to_string(),
+            default_input_tz: None,
+            preserve_interactivity: true,
+            keep_variables: vec![],
+        });
+
+        let inline_datasets =
+            decode_inline_datasets(request.inline_datasets, self.runtime.ctx.as_ref()).await?;
+
+        let spec: ChartSpec = serde_json::from_str(&request.spec)?;
+
+        let (transformed_spec, export_updates, warnings) = self
+            .runtime
+            .pre_transform_logical_plan(&spec, inline_datasets, &opts)
+            .await?;
+
+        let proto_export_updates = export_updates
+            .into_iter()
+            .map(|export_update| {
+                let namespace = match export_update.namespace {
+                    vegafusion_core::planning::watch::ExportUpdateNamespace::Signal => {
+                        "signal".to_string()
+                    }
+                    vegafusion_core::planning::watch::ExportUpdateNamespace::Data => {
+                        "data".to_string()
+                    }
+                };
+                Ok(ExportUpdate {
+                    namespace,
+                    name: export_update.name,
+                    scope: export_update.scope,
+                    value: Some(vegafusion_core::proto::gen::tasks::TaskValue::try_from(
+                        &export_update.value,
+                    )?),
+                })
+            })
+            .collect::<Result<Vec<_>, VegaFusionError>>()?;
+
+        let response = PreTransformLogicalPlanResult {
+            result: Some(pre_transform_logical_plan_result::Result::Response(
+                PreTransformLogicalPlanResponse {
+                    spec: serde_json::to_string(&transformed_spec)
+                        .with_context(|| "Failed to convert chart spec to string")?,
+                    export_updates: proto_export_updates,
+                    warnings,
+                },
+            )),
+        };
+
+        Ok(response)
     }
 }
 
@@ -282,6 +376,19 @@ impl TonicVegaFusionRuntime for VegaFusionRuntimeGrpc {
             Err(err) => Err(Status::unknown(err.to_string())),
         }
     }
+
+    async fn pre_transform_logical_plan(
+        &self,
+        request: Request<PreTransformLogicalPlanRequest>,
+    ) -> Result<Response<PreTransformLogicalPlanResult>, Status> {
+        let result = self
+            .pre_transform_logical_plan_request(request.into_inner())
+            .await;
+        match result {
+            Ok(result) => Ok(Response::new(result)),
+            Err(err) => Err(Status::unknown(err.to_string())),
+        }
+    }
 }
 
 /// VegaFusion Server
@@ -312,7 +419,7 @@ struct Args {
 fn main() -> Result<(), VegaFusionError> {
     let args = Args::parse();
 
-    // Create addresse
+    // Create address
     let grpc_address = format!("{}:{}", args.host, args.port);
 
     // Log Capacity limit
@@ -334,10 +441,10 @@ fn main() -> Result<(), VegaFusionError> {
         .build()
         .expect("Failed to create tokio runtime");
 
-    let tg_runtime = VegaFusionRuntime::new(Some(VegaFusionCache::new(
-        Some(args.capacity),
-        memory_limit,
-    )));
+    let tg_runtime = VegaFusionRuntime::new(
+        Some(VegaFusionCache::new(Some(args.capacity), memory_limit)),
+        None,
+    );
 
     tokio_runtime.block_on(async move {
         grpc_server(grpc_address, tg_runtime.clone(), args.web)

@@ -1,0 +1,829 @@
+{
+    "layer": [
+        {
+            "layer": [
+                {
+                    "layer": [
+                        {
+                            "mark": {
+                                "clip": true,
+                                "type": "line",
+                                "color": "#83AFF6",
+                                "tooltip": false
+                            },
+                            "encoding": {
+                                "x": {
+                                    "sort": "descending",
+                                    "type": "nominal",
+                                    "field": "product_category",
+                                    "scale": {
+                                        "type": "linear",
+                                        "zero": false
+                                    }
+                                },
+                                "y": {
+                                    "axis": {
+                                        "format": {
+                                            "type": "default",
+                                            "decimals": null
+                                        },
+                                        "formatType": "numberFormatFromNumberType"
+                                    },
+                                    "type": "quantitative",
+                                    "field": "order_total",
+                                    "scale": {
+                                        "type": "linear",
+                                        "zero": false
+                                    },
+                                    "format": {
+                                        "type": "default",
+                                        "decimals": null
+                                    },
+                                    "aggregate": "average",
+                                    "formatType": "numberFormatFromNumberType"
+                                },
+                                "color": {
+                                    "type": "nominal",
+                                    "datum": "order_total",
+                                    "scale": {
+                                        "range": [
+                                            "#83AFF6"
+                                        ],
+                                        "domain": [
+                                            "order_total"
+                                        ]
+                                    }
+                                },
+                                "tooltip": [
+                                    {
+                                        "type": "quantitative",
+                                        "field": "discount",
+                                        "aggregate": "average"
+                                    }
+                                ],
+                                "opacity": {
+                                    "condition": {
+                                        "test": {
+                                            "and": [
+                                                {
+                                                    "param": "legend_size_0"
+                                                },
+                                                {
+                                                    "param": "legend_color_0"
+                                                }
+                                            ]
+                                        },
+                                        "value": 1
+                                    },
+                                    "value": 0.2
+                                }
+                            },
+                            "transform": [],
+                            "params": [
+                                {
+                                    "name": "legend_size_0",
+                                    "select": {
+                                        "type": "point",
+                                        "encodings": [
+                                            "size"
+                                        ],
+                                        "toggle": "true"
+                                    },
+                                    "bind": "legend"
+                                },
+                                {
+                                    "name": "legend_color_0",
+                                    "select": {
+                                        "type": "point",
+                                        "encodings": [
+                                            "color"
+                                        ],
+                                        "toggle": "true"
+                                    },
+                                    "bind": "legend"
+                                },
+                                {
+                                    "name": "interval_selection",
+                                    "select": {
+                                        "type": "interval",
+                                        "encodings": [
+                                            "x",
+                                            "y"
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "layer": [
+                        {
+                            "mark": {
+                                "clip": true,
+                                "type": "line",
+                                "color": "#2266D3",
+                                "tooltip": false
+                            },
+                            "encoding": {
+                                "x": {
+                                    "sort": "descending",
+                                    "type": "nominal",
+                                    "field": "product_category",
+                                    "scale": {
+                                        "type": "linear",
+                                        "zero": false
+                                    }
+                                },
+                                "y": {
+                                    "axis": {
+                                        "format": {
+                                            "type": "default",
+                                            "decimals": null
+                                        },
+                                        "formatType": "numberFormatFromNumberType"
+                                    },
+                                    "type": "quantitative",
+                                    "field": "order_total",
+                                    "scale": {
+                                        "type": "linear",
+                                        "zero": false
+                                    },
+                                    "format": {
+                                        "type": "default",
+                                        "decimals": null
+                                    },
+                                    "aggregate": "median",
+                                    "formatType": "numberFormatFromNumberType"
+                                },
+                                "color": {
+                                    "type": "nominal",
+                                    "datum": "order_total",
+                                    "scale": {
+                                        "range": [
+                                            "#2266D3"
+                                        ],
+                                        "domain": [
+                                            "order_total"
+                                        ]
+                                    }
+                                },
+                                "tooltip": [
+                                    {
+                                        "type": "quantitative",
+                                        "field": "discount",
+                                        "aggregate": "median"
+                                    }
+                                ],
+                                "opacity": {
+                                    "condition": {
+                                        "test": {
+                                            "and": [
+                                                {
+                                                    "param": "legend_size_1"
+                                                },
+                                                {
+                                                    "param": "legend_color_1"
+                                                }
+                                            ]
+                                        },
+                                        "value": 1
+                                    },
+                                    "value": 0.2
+                                }
+                            },
+                            "transform": [],
+                            "params": [
+                                {
+                                    "name": "legend_size_1",
+                                    "select": {
+                                        "type": "point",
+                                        "encodings": [
+                                            "size"
+                                        ],
+                                        "toggle": "true"
+                                    },
+                                    "bind": "legend"
+                                },
+                                {
+                                    "name": "legend_color_1",
+                                    "select": {
+                                        "type": "point",
+                                        "encodings": [
+                                            "color"
+                                        ],
+                                        "toggle": "true"
+                                    },
+                                    "bind": "legend"
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "layer": [
+                        {
+                            "mark": {
+                                "clip": true,
+                                "type": "line",
+                                "color": "#CC8BFF",
+                                "tooltip": false
+                            },
+                            "encoding": {
+                                "x": {
+                                    "sort": "descending",
+                                    "type": "nominal",
+                                    "field": "product_category",
+                                    "scale": {
+                                        "type": "linear",
+                                        "zero": false
+                                    }
+                                },
+                                "y": {
+                                    "axis": {
+                                        "format": {
+                                            "type": "default",
+                                            "decimals": null
+                                        },
+                                        "formatType": "numberFormatFromNumberType"
+                                    },
+                                    "type": "quantitative",
+                                    "field": "order_total",
+                                    "scale": {
+                                        "type": "linear",
+                                        "zero": false
+                                    },
+                                    "format": {
+                                        "type": "default",
+                                        "decimals": null
+                                    },
+                                    "aggregate": "min",
+                                    "formatType": "numberFormatFromNumberType"
+                                },
+                                "color": {
+                                    "type": "nominal",
+                                    "datum": "order_total",
+                                    "scale": {
+                                        "range": [
+                                            "#CC8BFF"
+                                        ],
+                                        "domain": [
+                                            "order_total"
+                                        ]
+                                    }
+                                },
+                                "tooltip": [
+                                    {
+                                        "type": "quantitative",
+                                        "field": "discount",
+                                        "aggregate": "min"
+                                    }
+                                ],
+                                "opacity": {
+                                    "condition": {
+                                        "test": {
+                                            "and": [
+                                                {
+                                                    "param": "legend_size_2"
+                                                },
+                                                {
+                                                    "param": "legend_color_2"
+                                                }
+                                            ]
+                                        },
+                                        "value": 1
+                                    },
+                                    "value": 0.2
+                                }
+                            },
+                            "transform": [],
+                            "params": [
+                                {
+                                    "name": "legend_size_2",
+                                    "select": {
+                                        "type": "point",
+                                        "encodings": [
+                                            "size"
+                                        ],
+                                        "toggle": "true"
+                                    },
+                                    "bind": "legend"
+                                },
+                                {
+                                    "name": "legend_color_2",
+                                    "select": {
+                                        "type": "point",
+                                        "encodings": [
+                                            "color"
+                                        ],
+                                        "toggle": "true"
+                                    },
+                                    "bind": "legend"
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "layer": [
+                        {
+                            "mark": {
+                                "clip": true,
+                                "type": "line",
+                                "color": "#8018D3",
+                                "tooltip": false
+                            },
+                            "encoding": {
+                                "x": {
+                                    "sort": "descending",
+                                    "type": "nominal",
+                                    "field": "product_category",
+                                    "scale": {
+                                        "type": "linear",
+                                        "zero": false
+                                    }
+                                },
+                                "y": {
+                                    "axis": {
+                                        "format": {
+                                            "type": "default",
+                                            "decimals": null
+                                        },
+                                        "formatType": "numberFormatFromNumberType"
+                                    },
+                                    "type": "quantitative",
+                                    "field": "order_total",
+                                    "scale": {
+                                        "type": "linear",
+                                        "zero": false
+                                    },
+                                    "format": {
+                                        "type": "default",
+                                        "decimals": null
+                                    },
+                                    "aggregate": "max",
+                                    "formatType": "numberFormatFromNumberType"
+                                },
+                                "color": {
+                                    "type": "nominal",
+                                    "datum": "order_total",
+                                    "scale": {
+                                        "range": [
+                                            "#8018D3"
+                                        ],
+                                        "domain": [
+                                            "order_total"
+                                        ]
+                                    }
+                                },
+                                "tooltip": [
+                                    {
+                                        "type": "quantitative",
+                                        "field": "discount",
+                                        "aggregate": "max"
+                                    }
+                                ],
+                                "opacity": {
+                                    "condition": {
+                                        "test": {
+                                            "and": [
+                                                {
+                                                    "param": "legend_size_3"
+                                                },
+                                                {
+                                                    "param": "legend_color_3"
+                                                }
+                                            ]
+                                        },
+                                        "value": 1
+                                    },
+                                    "value": 0.2
+                                }
+                            },
+                            "transform": [],
+                            "params": [
+                                {
+                                    "name": "legend_size_3",
+                                    "select": {
+                                        "type": "point",
+                                        "encodings": [
+                                            "size"
+                                        ],
+                                        "toggle": "true"
+                                    },
+                                    "bind": "legend"
+                                },
+                                {
+                                    "name": "legend_color_3",
+                                    "select": {
+                                        "type": "point",
+                                        "encodings": [
+                                            "color"
+                                        ],
+                                        "toggle": "true"
+                                    },
+                                    "bind": "legend"
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "layer": [
+                        {
+                            "mark": {
+                                "clip": true,
+                                "type": "line",
+                                "color": "#0E9384",
+                                "tooltip": false
+                            },
+                            "encoding": {
+                                "x": {
+                                    "sort": "descending",
+                                    "type": "nominal",
+                                    "field": "product_category",
+                                    "scale": {
+                                        "type": "linear",
+                                        "zero": false
+                                    }
+                                },
+                                "y": {
+                                    "axis": {
+                                        "format": {
+                                            "type": "default",
+                                            "decimals": null
+                                        },
+                                        "formatType": "numberFormatFromNumberType"
+                                    },
+                                    "type": "quantitative",
+                                    "field": "order_total",
+                                    "scale": {
+                                        "type": "linear",
+                                        "zero": false
+                                    },
+                                    "format": {
+                                        "type": "default",
+                                        "decimals": null
+                                    },
+                                    "aggregate": "count",
+                                    "formatType": "numberFormatFromNumberType"
+                                },
+                                "color": {
+                                    "type": "nominal",
+                                    "datum": "order_total",
+                                    "scale": {
+                                        "range": [
+                                            "#0E9384"
+                                        ],
+                                        "domain": [
+                                            "order_total"
+                                        ]
+                                    }
+                                },
+                                "tooltip": [
+                                    {
+                                        "axis": {
+                                            "format": {
+                                                "type": "default",
+                                                "decimals": null
+                                            },
+                                            "formatType": "numberFormatFromNumberType"
+                                        },
+                                        "type": "quantitative",
+                                        "field": "order_total",
+                                        "scale": {
+                                            "type": "linear",
+                                            "zero": false
+                                        },
+                                        "format": {
+                                            "type": "default",
+                                            "decimals": null
+                                        },
+                                        "aggregate": "count",
+                                        "formatType": "numberFormatFromNumberType"
+                                    },
+                                    {
+                                        "type": "quantitative",
+                                        "field": "discount",
+                                        "aggregate": "sum"
+                                    }
+                                ],
+                                "opacity": {
+                                    "condition": {
+                                        "test": {
+                                            "and": [
+                                                {
+                                                    "param": "legend_size_4"
+                                                },
+                                                {
+                                                    "param": "legend_color_4"
+                                                }
+                                            ]
+                                        },
+                                        "value": 1
+                                    },
+                                    "value": 0.2
+                                }
+                            },
+                            "transform": [],
+                            "params": [
+                                {
+                                    "name": "legend_size_4",
+                                    "select": {
+                                        "type": "point",
+                                        "encodings": [
+                                            "size"
+                                        ],
+                                        "toggle": "true"
+                                    },
+                                    "bind": "legend"
+                                },
+                                {
+                                    "name": "legend_color_4",
+                                    "select": {
+                                        "type": "point",
+                                        "encodings": [
+                                            "color"
+                                        ],
+                                        "toggle": "true"
+                                    },
+                                    "bind": "legend"
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "layer": [
+                        {
+                            "mark": {
+                                "clip": true,
+                                "type": "line",
+                                "color": "#5FD9C3",
+                                "tooltip": false
+                            },
+                            "encoding": {
+                                "x": {
+                                    "sort": "descending",
+                                    "type": "nominal",
+                                    "field": "product_category",
+                                    "scale": {
+                                        "type": "linear",
+                                        "zero": false
+                                    }
+                                },
+                                "y": {
+                                    "axis": {
+                                        "format": {
+                                            "type": "default",
+                                            "decimals": null
+                                        },
+                                        "formatType": "numberFormatFromNumberType"
+                                    },
+                                    "type": "quantitative",
+                                    "field": "customer_name",
+                                    "scale": {
+                                        "type": "linear",
+                                        "zero": false
+                                    },
+                                    "format": {
+                                        "type": "default",
+                                        "decimals": null
+                                    },
+                                    "aggregate": "distinct",
+                                    "formatType": "numberFormatFromNumberType"
+                                },
+                                "color": {
+                                    "type": "nominal",
+                                    "datum": "customer_name",
+                                    "scale": {
+                                        "range": [
+                                            "#5FD9C3"
+                                        ],
+                                        "domain": [
+                                            "customer_name"
+                                        ]
+                                    }
+                                },
+                                "tooltip": [
+                                    {
+                                        "type": "quantitative",
+                                        "field": "discount",
+                                        "aggregate": "distinct"
+                                    }
+                                ],
+                                "opacity": {
+                                    "condition": {
+                                        "test": {
+                                            "and": [
+                                                {
+                                                    "param": "legend_size_5"
+                                                },
+                                                {
+                                                    "param": "legend_color_5"
+                                                }
+                                            ]
+                                        },
+                                        "value": 1
+                                    },
+                                    "value": 0.2
+                                }
+                            },
+                            "transform": [],
+                            "params": [
+                                {
+                                    "name": "legend_size_5",
+                                    "select": {
+                                        "type": "point",
+                                        "encodings": [
+                                            "size"
+                                        ],
+                                        "toggle": "true"
+                                    },
+                                    "bind": "legend"
+                                },
+                                {
+                                    "name": "legend_color_5",
+                                    "select": {
+                                        "type": "point",
+                                        "encodings": [
+                                            "color"
+                                        ],
+                                        "toggle": "true"
+                                    },
+                                    "bind": "legend"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ],
+            "resolve": {
+                "scale": {
+                    "color": "independent"
+                }
+            }
+        },
+        {
+            "layer": [
+                {
+                    "layer": [
+                        {
+                            "mark": {
+                                "clip": true,
+                                "type": "line",
+                                "color": "#EEC026",
+                                "tooltip": false
+                            },
+                            "encoding": {
+                                "x": {
+                                    "sort": "descending",
+                                    "type": "nominal",
+                                    "field": "product_category",
+                                    "scale": {
+                                        "type": "linear",
+                                        "zero": false
+                                    }
+                                },
+                                "y": {
+                                    "axis": {
+                                        "title": null
+                                    },
+                                    "type": "quantitative",
+                                    "field": "order_total",
+                                    "scale": {
+                                        "zero": false
+                                    },
+                                    "format": {
+                                        "type": "default",
+                                        "decimals": null
+                                    },
+                                    "aggregate": "sum",
+                                    "formatType": "numberFormatFromNumberType"
+                                },
+                                "color": {
+                                    "type": "nominal",
+                                    "datum": "order_total",
+                                    "scale": {
+                                        "range": [
+                                            "#EEC026"
+                                        ],
+                                        "domain": [
+                                            "order_total"
+                                        ]
+                                    }
+                                },
+                                "tooltip": [
+                                    {
+                                        "type": "quantitative",
+                                        "field": "discount",
+                                        "aggregate": "sum"
+                                    }
+                                ],
+                                "opacity": {
+                                    "condition": {
+                                        "test": {
+                                            "and": [
+                                                {
+                                                    "param": "legend_size_6"
+                                                },
+                                                {
+                                                    "param": "legend_color_6"
+                                                }
+                                            ]
+                                        },
+                                        "value": 1
+                                    },
+                                    "value": 0.2
+                                }
+                            },
+                            "transform": [],
+                            "params": [
+                                {
+                                    "name": "legend_size_6",
+                                    "select": {
+                                        "type": "point",
+                                        "encodings": [
+                                            "size"
+                                        ],
+                                        "toggle": "true"
+                                    },
+                                    "bind": "legend"
+                                },
+                                {
+                                    "name": "legend_color_6",
+                                    "select": {
+                                        "type": "point",
+                                        "encodings": [
+                                            "color"
+                                        ],
+                                        "toggle": "true"
+                                    },
+                                    "bind": "legend"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ],
+            "resolve": {
+                "scale": {
+                    "color": "independent"
+                }
+            }
+        }
+    ],
+    "title": "",
+    "config": {
+        "legend": {
+            "disable": false
+        },
+        "axisQuantitative": {
+            "tickCount": 5
+        },
+        "area": {
+            "line": true
+        },
+        "mark": {
+            "color": "#2266D3"
+        },
+        "customFormatTypes": true
+    },
+    "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+    "resolve": {
+        "scale": {
+            "y": "independent"
+        }
+    },
+    "encoding": {},
+    "usermeta": {
+        "seriesNames": [
+            "order_total",
+            "order_total",
+            "order_total",
+            "order_total",
+            "order_total",
+            "customer_name",
+            "order_total"
+        ],
+        "seriesOrder": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            6,
+            5
+        ],
+        "specSchemaVersion": 2,
+        "tooltipDefaultMode": false
+    },
+    "height": "container",
+    "width": "container",
+    "autosize": {
+        "type": "fit"
+    },
+    "data": {
+        "url": "vegafusion+dataset://sales_data_1kk"
+    }
+}

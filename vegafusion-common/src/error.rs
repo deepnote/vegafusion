@@ -65,6 +65,9 @@ pub enum VegaFusionError {
     #[error("Arrow error: {0}\n{1}")]
     ArrowError(ArrowError, ErrorContext),
 
+    #[error("Vendor error: {0}\n{1}")]
+    VendorError(String, ErrorContext),
+
     #[error("DataFusion error: {0}\n{1}")]
     DataFusionError(DataFusionError, ErrorContext),
 
@@ -153,6 +156,10 @@ impl VegaFusionError {
                 context.contexts.push(context_fn().into());
                 VegaFusionError::DataFusionError(err, context)
             }
+            VendorError(msg, mut context) => {
+                context.contexts.push(context_fn().into());
+                VegaFusionError::VendorError(msg, context)
+            }
             #[cfg(feature = "proto")]
             DataFusionProtoError(err, mut context) => {
                 context.contexts.push(context_fn().into());
@@ -198,6 +205,10 @@ impl VegaFusionError {
                 VegaFusionError::UrlParseError(err, context)
             }
         }
+    }
+
+    pub fn vendor<S: Into<String>>(message: S) -> Self {
+        Self::VendorError(message.into(), Default::default())
     }
 
     pub fn parse<S: Into<String>>(message: S) -> Self {
@@ -259,6 +270,7 @@ impl VegaFusionError {
             DataFusionError(err, context) => {
                 VegaFusionError::ExternalError(err.to_string(), context.clone())
             }
+            VendorError(msg, context) => VegaFusionError::VendorError(msg.clone(), context.clone()),
             #[cfg(feature = "proto")]
             DataFusionProtoError(err, context) => {
                 VegaFusionError::ExternalError(err.to_string(), context.clone())
