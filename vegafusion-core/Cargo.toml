@@ -2,7 +2,7 @@
 name = "vegafusion-core"
 license = "BSD-3-Clause"
 edition = "2021"
-version = "2.0.5"
+version = "2.0.6"
 description = "Core components required by multiple VegaFusion crates, with WASM compatibility"
 
 [features]
@@ -48,7 +48,7 @@ workspace = true
 [dependencies.vegafusion-common]
 path = "../vegafusion-common"
 features = ["json", "sqlparser"]
-version = "2.0.5"
+version = "2.0.6"
 
 [dependencies.datafusion-common]
 workspace = true
