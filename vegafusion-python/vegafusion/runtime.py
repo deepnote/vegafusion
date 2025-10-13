@@ -2,11 +2,20 @@ from __future__ import annotations
 
 import sys
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, Literal, TypedDict, Union, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Literal,
+    Protocol,
+    TypedDict,
+    Union,
+    cast,
+)
 
 # Delay narwhals import to avoid eager pandas import
 # We'll import narwhals inside functions to avoid eager pandas import
-from arro3.core import Table
+from arro3.core import Schema, Table
 
 from vegafusion._vegafusion import get_cpu_count, get_virtual_memory
 from vegafusion.transformer import DataFrameLike
@@ -26,6 +35,22 @@ if TYPE_CHECKING:
         PyChartStateGrpc,
         PyVegaFusionRuntime,
     )
+
+
+class PlanExecutorProtocol(Protocol):
+    """Protocol for objects with execute_plan method."""
+
+    def execute_plan(self, logical_plan_json: str) -> pa.Table:
+        """Execute a logical plan and return an Arrow table."""
+        ...
+
+
+# Type alias for plan executors
+PlanExecutor = Union[
+    # Callable that takes logical plan JSON and returns Arrow table
+    Callable[[str], "pa.Table"],
+    PlanExecutorProtocol,  # Object with execute_plan method
+]
 
 # This type isn't defined in the grpcio package, so let's at least name it
 UnaryUnaryMultiCallable = Any
@@ -182,6 +207,7 @@ class VegaFusionRuntime:
         cache_capacity: int = 64,
         memory_limit: int | None = None,
         worker_threads: int | None = None,
+        executor: PlanExecutor | None = None,
     ) -> None:
         """
         Initialize a VegaFusionRuntime.
@@ -190,12 +216,19 @@ class VegaFusionRuntime:
             cache_capacity: Cache capacity.
             memory_limit: Memory limit.
             worker_threads: Number of worker threads.
+            executor: Optional custom executor for logical plan execution.
+            Can be either:
+                - A callable that takes a logical plan JSON string and
+                returns a PyArrow Table
+                - An object with an execute_plan method that has the same signature
+                - None to use the default DataFusion executor
         """
         self._runtime = None
         self._grpc_url: str | None = None
         self._cache_capacity = cache_capacity
         self._memory_limit = memory_limit
         self._worker_threads = worker_threads
+        self._executor = executor
 
     @property
     def runtime(self) -> PyVegaFusionRuntime:
@@ -218,8 +251,35 @@ class VegaFusionRuntime:
                 self.cache_capacity,
                 self.memory_limit,
                 self.worker_threads,
+                self._executor,
             )
         return self._runtime
+
+    @classmethod
+    def new_vendor(
+        cls,
+        vendor: Literal["datafusion", "sparksql"],
+        executor: PlanExecutor | None = None,
+        cache_capacity: int = 64,
+        memory_limit: int | None = None,
+        worker_threads: int | None = None,
+    ) -> VegaFusionRuntime:
+        from vegafusion._vegafusion import PyVegaFusionRuntime
+
+        inst = cls(cache_capacity, memory_limit, worker_threads, executor=None)
+        if inst.memory_limit is None:
+            inst.memory_limit = get_virtual_memory() // 2
+        if inst.worker_threads is None:
+            inst.worker_threads = get_cpu_count()
+
+        inst._runtime = PyVegaFusionRuntime.new_embedded_vendor(
+            inst.cache_capacity,
+            inst.memory_limit,
+            inst.worker_threads,
+            vendor,
+            executor,
+        )
+        return inst
 
     def grpc_connect(self, url: str) -> None:
         """
@@ -247,14 +307,14 @@ class VegaFusionRuntime:
         self,
         inline_datasets: dict[str, Any] | None = None,
         inline_dataset_usage: dict[str, list[str]] | None = None,
-    ) -> dict[str, Table]:
+    ) -> dict[str, Table | Schema]:
         """
         Import or register inline datasets.
 
         Args:
-            inline_datasets: A dictionary from dataset names to pandas DataFrames or
-                pyarrow Tables. Inline datasets may be referenced by the input
-                specification using the following url syntax
+            inline_datasets: A dictionary from dataset names to pandas DataFrames,
+                pyarrow Tables, or pyarrow Schemas. Inline datasets may be referenced
+                by the input specification using the following url syntax
                 'vegafusion+dataset://{dataset_name}' or 'table://{dataset_name}'.
             inline_dataset_usage: Columns that are referenced by datasets. If no
                 entry is found, then all columns should be included.
@@ -267,10 +327,16 @@ class VegaFusionRuntime:
 
         inline_datasets = inline_datasets or {}
         inline_dataset_usage = inline_dataset_usage or {}
-        imported_inline_datasets: dict[str, Table] = {}
+        imported_inline_datasets: dict[str, Table | Schema] = {}
         for name, value in inline_datasets.items():
             columns = inline_dataset_usage.get(name)
-            if pd is not None and pa is not None and isinstance(value, pd.DataFrame):
+            if (pa is not None and isinstance(value, pa.Schema)) or hasattr(
+                value, "__arrow_c_schema__"
+            ):
+                # Handle PyArrow Schema - convert to arro3 Schema
+                # This allows for planning without requiring actual data
+                imported_inline_datasets[name] = Schema.from_arrow(value)
+            elif pd is not None and pa is not None and isinstance(value, pd.DataFrame):
                 # rename to help mypy
                 inner_value: pd.DataFrame = value
                 del value
@@ -372,10 +438,10 @@ class VegaFusionRuntime:
                 than being pre-transformed. If False, then all possible data
                 transformations are applied even if they break the original interactive
                 behavior of the chart.
-            inline_datasets: A dict from dataset names to pandas DataFrames or pyarrow
-                Tables. Inline datasets may be referenced by the input specification
-                using the following url syntax 'vegafusion+dataset://{dataset_name}' or
-                'table://{dataset_name}'.
+            inline_datasets: A dict from dataset names to pandas DataFrames, pyarrow
+                Tables, or pyarrow Schemas. Inline datasets may be referenced by the
+                input specification using the following url syntax
+                'vegafusion+dataset://{dataset_name}' or 'table://{dataset_name}'.
             keep_signals: Signals from the input spec that must be included in the
                 pre-transformed spec, even if they are no longer referenced.
                 A list with elements that are either:
@@ -450,11 +516,10 @@ class VegaFusionRuntime:
                 datasets. If exceeded, datasets will be truncated to this number of
                 rows and a RowLimitExceeded warning will be included in the ChartState's
                 warnings list.
-            inline_datasets: A dict from dataset names to pandas DataFrames or pyarrow
-                Tables. Inline datasets may be referenced by the input specification
-                using the following url syntax 'vegafusion+dataset://{dataset_name}' or
-                'table://{dataset_name}'.
-
+            inline_datasets: A dict from dataset names to pandas DataFrames, pyarrow
+                Tables, or pyarrow Schemas. Inline datasets may be referenced by the
+                input specification using the following url syntax
+                'vegafusion+dataset://{dataset_name}' or 'table://{dataset_name}'.
         Returns:
             ChartState
         """
@@ -464,7 +529,11 @@ class VegaFusionRuntime:
         )
         return ChartState(
             self.runtime.new_chart_state(
-                spec, local_tz, default_input_tz, row_limit, inline_arrow_dataset
+                spec,
+                local_tz,
+                default_input_tz,
+                row_limit,
+                inline_arrow_dataset,
             )
         )
 
@@ -500,10 +569,10 @@ class VegaFusionRuntime:
                 datasets. If exceeded, datasets will be truncated to this number of
                 rows and a RowLimitExceeded warning will be included in the resulting
                 warnings list.
-            inline_datasets: A dict from dataset names to pandas DataFrames or pyarrow
-                Tables. Inline datasets may be referenced by the input specification
-                using the following url syntax 'vegafusion+dataset://{dataset_name}'
-                or 'table://{dataset_name}'.
+            inline_datasets: A dict from dataset names to pandas DataFrames, pyarrow
+                Tables, or pyarrow Schemas. Inline datasets may be referenced by the
+                input specification using the following url syntax
+                'vegafusion+dataset://{dataset_name}' or 'table://{dataset_name}'.
             trim_unused_columns: If True, unused columns are removed from returned
                 datasets.
             dataset_format: Format for returned datasets. One of:
@@ -664,8 +733,8 @@ class VegaFusionRuntime:
                 * ``"pyarrow"``: pyarrow.Table
                 * ``"arrow-ipc"``: bytes in arrow IPC format
                 * ``"arrow-ipc-base64"``: base64 encoded arrow IPC format
-            inline_datasets: A dict from dataset names to pandas DataFrames or pyarrow
-                Tables. Inline datasets may be referenced by the input specification
+            inline_datasets: A dict from dataset names to pandas DataFrames, pyarrow
+                Tables, or pyarrow Schemas. Inline datasets may be referenced by the input specification
                 using the following url syntax 'vegafusion+dataset://{dataset_name}' or
                 'table://{dataset_name}'.
             keep_signals: Signals from the input spec that must be included in the
@@ -725,6 +794,88 @@ class VegaFusionRuntime:
         )
 
         return new_spec, datasets, warnings
+
+    def pre_transform_logical_plan(
+        self,
+        spec: dict[str, Any] | str,
+        local_tz: str | None = None,
+        default_input_tz: str | None = None,
+        preserve_interactivity: bool = True,
+        inline_datasets: dict[str, Any] | None = None,
+        keep_signals: list[str | tuple[str, list[int]]] | None = None,
+        keep_datasets: list[str | tuple[str, list[int]]] | None = None,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]], list[PreTransformWarning]]:
+        """
+        Evaluate supported transforms in an input Vega specification into
+        logical plans.
+
+        This method is similar to pre_transform_datasets, but for inline
+        datasets defined as schema, it will return logical plan instead
+        or applying transformations directly on data.
+
+        Args:
+            spec: A Vega specification dict or JSON string.
+            local_tz: Name of timezone to be considered local. E.g. 'America/New_York'.
+                Defaults to the value of vf.get_local_tz(), which defaults to the system
+                timezone if one can be determined.
+            default_input_tz: Name of timezone (e.g. 'America/New_York') that naive
+                datetime strings should be interpreted in. Defaults to `local_tz`.
+            preserve_interactivity: If True (default) then the interactive behavior of
+                the chart will be preserved. This requires that all the data that
+                participates in interactions be included in the resulting spec rather
+                than being pre-transformed. If False, then all possible data
+                transformations are applied even if they break the original interactive
+                behavior of the chart.
+            inline_datasets: A dict from dataset names to pandas DataFrames, pyarrow
+                Tables, or pyarrow Schemas. Inline datasets may be referenced by the
+                input specification using the following url syntax
+                'vegafusion+dataset://{dataset_name}' or 'table://{dataset_name}'.
+
+            keep_signals: Signals from the input spec that must be included in the
+                pre-transformed spec, even if they are no longer referenced.
+                A list with elements that are either:
+
+                * The name of a top-level signal as a string
+                * A two-element tuple where the first element is the name of a signal
+                  as a string and the second element is the nested scope of the dataset
+                  as a list of integers
+            keep_datasets: Datasets from the input spec that must be included in the
+                pre-transformed spec even if they are no longer referenced.
+                A list with elements that are either:
+
+                * The name of a top-level dataset as a string
+                * A two-element tuple where the first element is the name of a dataset
+                  as a string and the second element is the nested scope of the dataset
+                  as a list of integers
+
+        Returns:
+            tuple[dict[str, Any], list[dict[str, Any]], list[PreTransformWarning]]:
+            Three-element tuple of
+
+            * The Vega specification as a dict with pre-transformed datasets
+              included but left empty.
+            * Export updates as a list of dictionaries with keys:
+              * `"name"`: dataset name
+              * `"namespace"`: where this dataset belongs, either `"data"` or `"signal"`
+              * `"logical_plan"`: json representation of LogicalPlan (when applicable)
+              * `"data"`: materialized data (when applicable)
+            * A list of warnings as dictionaries. Each warning dict has a ``'type'``
+              key indicating the warning type, and a ``'message'`` key containing
+              a description of the warning.
+        """
+        local_tz = local_tz or get_local_tz()
+
+        new_spec, export_updates, warnings = self.runtime.pre_transform_logical_plan(
+            spec,
+            local_tz,
+            default_input_tz=default_input_tz,
+            preserve_interactivity=preserve_interactivity,
+            inline_datasets=inline_datasets or {},
+            keep_signals=parse_variables(keep_signals),
+            keep_datasets=parse_variables(keep_datasets),
+        )
+
+        return new_spec, export_updates, warnings
 
     @property
     def worker_threads(self) -> int | None:
