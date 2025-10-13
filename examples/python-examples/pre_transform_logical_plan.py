@@ -2,7 +2,6 @@ import json
 from typing import Any
 
 import vegafusion as vf
-from datafusion import SessionContext
 import pyarrow as pa
 
 
