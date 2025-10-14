@@ -15,8 +15,7 @@ use vegafusion_core::error::{ToExternalError, VegaFusionError};
 use vegafusion_core::proto::gen::pretransform::pre_transform_extract_warning::WarningType as ExtractWarningType;
 use vegafusion_core::proto::gen::pretransform::pre_transform_values_warning::WarningType as ValueWarningType;
 use vegafusion_core::proto::gen::pretransform::{
-    PreTransformExtractOpts, PreTransformSpecOpts,
-    PreTransformValuesOpts, PreTransformVariable,
+    PreTransformExtractOpts, PreTransformSpecOpts, PreTransformValuesOpts, PreTransformVariable,
 };
 use vegafusion_core::proto::gen::tasks::{TzConfig, Variable};
 use vegafusion_runtime::task_graph::GrpcVegaFusionRuntime;
@@ -402,7 +401,6 @@ impl PyVegaFusionRuntime {
             Ok((tx_spec.into(), datasets, warnings.into()))
         })
     }
-
 
     pub fn clear_cache(&self) -> PyResult<()> {
         if let Some(runtime) = self.runtime.as_any().downcast_ref::<VegaFusionRuntime>() {

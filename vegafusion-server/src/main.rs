@@ -8,10 +8,9 @@ use vegafusion_core::proto::gen::services::vega_fusion_runtime_server::{
     VegaFusionRuntimeServer as TonicVegaFusionRuntimeServer,
 };
 use vegafusion_core::proto::gen::services::{
-    pre_transform_extract_result, pre_transform_spec_result,
-    pre_transform_values_result, query_request, query_result, PreTransformExtractResult,
-    PreTransformSpecResult, PreTransformValuesResult, QueryRequest,
-    QueryResult,
+    pre_transform_extract_result, pre_transform_spec_result, pre_transform_values_result,
+    query_request, query_result, PreTransformExtractResult, PreTransformSpecResult,
+    PreTransformValuesResult, QueryRequest, QueryResult,
 };
 use vegafusion_core::proto::gen::tasks::TaskGraphValueResponse;
 use vegafusion_core::proto::gen::tasks::{
@@ -25,10 +24,9 @@ use vegafusion_runtime::task_graph::runtime::{decode_inline_datasets, VegaFusion
 use clap::Parser;
 use regex::Regex;
 use vegafusion_core::proto::gen::pretransform::{
-    PreTransformExtractDataset, PreTransformExtractRequest,
-    PreTransformExtractResponse, PreTransformSpecOpts, PreTransformSpecRequest,
-    PreTransformSpecResponse, PreTransformValuesOpts,
-    PreTransformValuesRequest, PreTransformValuesResponse,
+    PreTransformExtractDataset, PreTransformExtractRequest, PreTransformExtractResponse,
+    PreTransformSpecOpts, PreTransformSpecRequest, PreTransformSpecResponse,
+    PreTransformValuesOpts, PreTransformValuesRequest, PreTransformValuesResponse,
 };
 use vegafusion_runtime::task_graph::cache::VegaFusionCache;
 use vegafusion_runtime::tokio_runtime::TOKIO_THREAD_STACK_SIZE;
