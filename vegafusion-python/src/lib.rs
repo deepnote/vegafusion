@@ -99,8 +99,7 @@ impl PyVegaFusionRuntime {
         memory_limit: Option<usize>,
         worker_threads: Option<i32>,
     ) -> PyResult<Self> {
-        let rust_executor = select_executor_for_vendor(None, None)?;
-        Self::build_with_executor(max_capacity, memory_limit, worker_threads, rust_executor)
+        Self::build_with_executor(max_capacity, memory_limit, worker_threads, None)
     }
 
     #[staticmethod]
