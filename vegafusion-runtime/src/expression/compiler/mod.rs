@@ -82,28 +82,36 @@ mod test_compile {
     #[tokio::test]
     async fn test_compile_literal_float() {
         let expression = parse(r#"22.50"#).unwrap();
-        let result = compile(&expression, &Default::default(), None).await.unwrap();
+        let result = compile(&expression, &Default::default(), None)
+            .await
+            .unwrap();
         assert_eq!(result, lit(22.5))
     }
 
     #[tokio::test]
     async fn test_compile_literal_integer() {
         let expression = parse(r#"22"#).unwrap();
-        let result = compile(&expression, &Default::default(), None).await.unwrap();
+        let result = compile(&expression, &Default::default(), None)
+            .await
+            .unwrap();
         assert_eq!(result, lit(22.0))
     }
 
     #[tokio::test]
     async fn test_compile_literal_string() {
         let expression = parse(r#"'Hello, world!'"#).unwrap();
-        let result = compile(&expression, &Default::default(), None).await.unwrap();
+        let result = compile(&expression, &Default::default(), None)
+            .await
+            .unwrap();
         assert_eq!(result, lit("Hello, world!"))
     }
 
     #[tokio::test]
     async fn test_compile_literal_boolean() {
         let expression = parse(r#" false "#).unwrap();
-        let result = compile(&expression, &Default::default(), None).await.unwrap();
+        let result = compile(&expression, &Default::default(), None)
+            .await
+            .unwrap();
         assert_eq!(result, lit(false))
     }
 
@@ -530,7 +538,9 @@ mod test_compile {
         )]))
         .unwrap();
 
-        let result_expr = compile(&expr, &Default::default(), Some(&schema)).await.unwrap();
+        let result_expr = compile(&expr, &Default::default(), Some(&schema))
+            .await
+            .unwrap();
 
         let expected_expr = Expr::BinaryExpr(BinaryExpr {
             left: Box::new(flat_col("two")),
@@ -552,7 +562,9 @@ mod test_compile {
         let two_field = Field::new("two", two_type, true);
         let schema = Schema::new(vec![two_field]);
         let schema = DFSchema::try_from(schema).unwrap();
-        let result_expr = compile(&expr, &Default::default(), Some(&schema)).await.unwrap();
+        let result_expr = compile(&expr, &Default::default(), Some(&schema))
+            .await
+            .unwrap();
         println!("compiled: {result_expr:?}");
 
         // Eval to column no longer available on Expr

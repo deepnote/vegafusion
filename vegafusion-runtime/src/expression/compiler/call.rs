@@ -151,9 +151,9 @@ pub async fn compile_call(
                                     config.plan_executor.execute_plan(plan.clone()).await?
                                 }
                             };
-                            let tz_config = config.tz_config.with_context(|| {
-                                "No local timezone info provided".to_string()
-                            })?;
+                            let tz_config = config
+                                .tz_config
+                                .with_context(|| "No local timezone info provided".to_string())?;
                             callee(&table, &node.arguments[1..], schema, &tz_config)
                         } else {
                             Err(VegaFusionError::internal(format!(
