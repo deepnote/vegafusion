@@ -59,7 +59,7 @@ pub fn check_scalar_evaluation(expr_str: &str, config: &CompilationConfig) {
     let parsed = parse(expr_str).unwrap();
 
     // Build compilation config
-    let compiled = compile(&parsed, &config, None).unwrap();
+    let compiled = TOKIO_RUNTIME.block_on(compile(&parsed, &config, None)).unwrap();
     let result = compiled.eval_to_scalar().unwrap();
 
     // Serialize and deserialize to normalize types to those supported by JavaScript
