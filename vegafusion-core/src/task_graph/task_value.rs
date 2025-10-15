@@ -118,12 +118,6 @@ impl TryFrom<&ProtoTaskValue> for TaskValue {
                 let scalar = ScalarValue::try_from_array(scalar_array, 0)?;
                 Ok(Self::Scalar(scalar))
             }
-            // TODO: we could use datafusion_proto::bytes::logical_plan_from_bytes here, but that
-            // requires adding datafusion_proto to vegafusion-core deps, as well as passing
-            // datafusion session (maybe empty one?) to unserialize plan
-            TaskValueData::Plan(_value) => Err(VegaFusionError::internal(
-                "Deserialization of Plan TaskValue not yet implemented",
-            )),
         }
     }
 }
@@ -144,11 +138,8 @@ impl TryFrom<&TaskValue> for ProtoTaskValue {
             TaskValue::Table(table) => Ok(Self {
                 data: Some(TaskValueData::Table(table.to_ipc_bytes()?)),
             }),
-            // TODO: we could use datafusion_proto::bytes::logical_plan_to_bytes here, but that
-            // requires adding datafusion_proto to vegafusion-core deps, as well as passing
-            // datafusion session (maybe empty one?) to unserialize plan
             TaskValue::Plan(_) => Err(VegaFusionError::internal(
-                "Cannot convert Plan TaskValue to protobuf representation",
+                "TaskValue::Plan cannot be serialized to protobuf. Plans are intermediate values that should be materialized to tables before serialization.",
             )),
         }
     }

@@ -16,10 +16,6 @@ message TaskValue {
    * Serialized Arrow record batch in Arrow IPC format
    */
     bytes table = 2;
-  /*
-   * Serialized DataFusion LogicalPlan in protobuf format
-   */
-   bytes plan = 3;
   }
 }
 

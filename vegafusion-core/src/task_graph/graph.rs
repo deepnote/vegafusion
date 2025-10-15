@@ -216,7 +216,6 @@ impl TaskGraph {
                 match value.data.as_ref().unwrap() {
                     Data::Scalar(_) => "scalar".hash(&mut hasher),
                     Data::Table(_) => "data".hash(&mut hasher),
-                    Data::Plan(_) => "plan".hash(&mut hasher),
                 }
             } else {
                 // Include id_fingerprint of parents in the hash
