@@ -40,7 +40,7 @@ def spark():
         .getOrCreate()
     )
 
-    # This is required for properly handling temporal. Due to how Spark handles dates (which doesn't match 
+    # This is required for properly handling temporal. Due to how Spark handles dates (which doesn't match
     # proper SQL standart), we have to set timezone to UTC. We mention this is our docs for users.
     session.sql("SET TIME ZONE 'UTC'")
 
