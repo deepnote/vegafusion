@@ -8,10 +8,9 @@ use vegafusion_core::proto::gen::services::vega_fusion_runtime_server::{
     VegaFusionRuntimeServer as TonicVegaFusionRuntimeServer,
 };
 use vegafusion_core::proto::gen::services::{
-    pre_transform_extract_result, pre_transform_logical_plan_result, pre_transform_spec_result,
-    pre_transform_values_result, query_request, query_result, PreTransformExtractResult,
-    PreTransformLogicalPlanResult, PreTransformSpecResult, PreTransformValuesResult, QueryRequest,
-    QueryResult,
+    pre_transform_extract_result, pre_transform_spec_result, pre_transform_values_result,
+    query_request, query_result, PreTransformExtractResult, PreTransformSpecResult,
+    PreTransformValuesResult, QueryRequest, QueryResult,
 };
 use vegafusion_core::proto::gen::tasks::TaskGraphValueResponse;
 use vegafusion_core::proto::gen::tasks::{
@@ -25,11 +24,9 @@ use vegafusion_runtime::task_graph::runtime::{decode_inline_datasets, VegaFusion
 use clap::Parser;
 use regex::Regex;
 use vegafusion_core::proto::gen::pretransform::{
-    ExportUpdate, PreTransformExtractDataset, PreTransformExtractRequest,
-    PreTransformExtractResponse, PreTransformLogicalPlanOpts, PreTransformLogicalPlanRequest,
-    PreTransformLogicalPlanResponse, PreTransformSpecOpts, PreTransformSpecRequest,
-    PreTransformSpecResponse, PreTransformValuesOpts, PreTransformValuesRequest,
-    PreTransformValuesResponse,
+    PreTransformExtractDataset, PreTransformExtractRequest, PreTransformExtractResponse,
+    PreTransformSpecOpts, PreTransformSpecRequest, PreTransformSpecResponse,
+    PreTransformValuesOpts, PreTransformValuesRequest, PreTransformValuesResponse,
 };
 use vegafusion_runtime::task_graph::cache::VegaFusionCache;
 use vegafusion_runtime::tokio_runtime::TOKIO_THREAD_STACK_SIZE;
@@ -268,63 +265,6 @@ impl VegaFusionRuntimeGrpc {
 
         Ok(result)
     }
-
-    async fn pre_transform_logical_plan_request(
-        &self,
-        request: PreTransformLogicalPlanRequest,
-    ) -> Result<PreTransformLogicalPlanResult, VegaFusionError> {
-        let opts = request.opts.unwrap_or_else(|| PreTransformLogicalPlanOpts {
-            local_tz: "UTC".to_string(),
-            default_input_tz: None,
-            preserve_interactivity: true,
-            keep_variables: vec![],
-        });
-
-        let inline_datasets =
-            decode_inline_datasets(request.inline_datasets, self.runtime.ctx.as_ref()).await?;
-
-        let spec: ChartSpec = serde_json::from_str(&request.spec)?;
-
-        let (transformed_spec, export_updates, warnings) = self
-            .runtime
-            .pre_transform_logical_plan(&spec, inline_datasets, &opts)
-            .await?;
-
-        let proto_export_updates = export_updates
-            .into_iter()
-            .map(|export_update| {
-                let namespace = match export_update.namespace {
-                    vegafusion_core::planning::watch::ExportUpdateNamespace::Signal => {
-                        "signal".to_string()
-                    }
-                    vegafusion_core::planning::watch::ExportUpdateNamespace::Data => {
-                        "data".to_string()
-                    }
-                };
-                Ok(ExportUpdate {
-                    namespace,
-                    name: export_update.name,
-                    scope: export_update.scope,
-                    value: Some(vegafusion_core::proto::gen::tasks::TaskValue::try_from(
-                        &export_update.value,
-                    )?),
-                })
-            })
-            .collect::<Result<Vec<_>, VegaFusionError>>()?;
-
-        let response = PreTransformLogicalPlanResult {
-            result: Some(pre_transform_logical_plan_result::Result::Response(
-                PreTransformLogicalPlanResponse {
-                    spec: serde_json::to_string(&transformed_spec)
-                        .with_context(|| "Failed to convert chart spec to string")?,
-                    export_updates: proto_export_updates,
-                    warnings,
-                },
-            )),
-        };
-
-        Ok(response)
-    }
 }
 
 #[tonic::async_trait]
@@ -370,19 +310,6 @@ impl TonicVegaFusionRuntime for VegaFusionRuntimeGrpc {
     ) -> Result<Response<PreTransformValuesResult>, Status> {
         let result = self
             .pre_transform_values_request(request.into_inner())
-            .await;
-        match result {
-            Ok(result) => Ok(Response::new(result)),
-            Err(err) => Err(Status::unknown(err.to_string())),
-        }
-    }
-
-    async fn pre_transform_logical_plan(
-        &self,
-        request: Request<PreTransformLogicalPlanRequest>,
-    ) -> Result<Response<PreTransformLogicalPlanResult>, Status> {
-        let result = self
-            .pre_transform_logical_plan_request(request.into_inner())
             .await;
         match result {
             Ok(result) => Ok(Response::new(result)),

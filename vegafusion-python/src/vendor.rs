@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use crate::executor::python_object_to_executor;
 use async_trait::async_trait;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -50,8 +49,15 @@ pub fn select_executor_for_vendor(
             Ok(Some(Arc::new(SparkSqlPlanExecutor::new(py_exec))))
         }
         Some("datafusion") | Some("") | None => {
-            // Fall back to default DataFusion if no executor; otherwise wrap Python executor
-            python_object_to_executor(executor)
+            // For DataFusion we don't support passing custom executor from Python (due to issues with
+            // serialization and deserialization of LogicalPlan). We always use default runtime executor
+            // by passing None
+            if executor.is_some() {
+                return Err(PyValueError::new_err(
+                    "Custom executors are not supported for the default DataFusion runtime. Remove executor parameter or use different vendor.",
+                ));
+            }
+            Ok(None)
         }
         Some(other) => Err(PyValueError::new_err(format!(
             "Unsupported vendor: '{}'. Supported vendors: 'datafusion', 'sparksql'",

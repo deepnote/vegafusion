@@ -1,12 +1,11 @@
 mod chart_state;
-mod executor;
 mod utils;
 mod vendor;
 
 use lazy_static::lazy_static;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyList, PyString, PyTuple};
+use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 use std::str::FromStr;
 use std::sync::{Arc, Once};
 use tokio::runtime::Runtime;
@@ -14,11 +13,9 @@ use tonic::transport::{Channel, Uri};
 
 use vegafusion_core::error::{ToExternalError, VegaFusionError};
 use vegafusion_core::proto::gen::pretransform::pre_transform_extract_warning::WarningType as ExtractWarningType;
-use vegafusion_core::proto::gen::pretransform::pre_transform_logical_plan_warning::WarningType as LogicalPlanWarningType;
 use vegafusion_core::proto::gen::pretransform::pre_transform_values_warning::WarningType as ValueWarningType;
 use vegafusion_core::proto::gen::pretransform::{
-    PreTransformExtractOpts, PreTransformLogicalPlanOpts, PreTransformSpecOpts,
-    PreTransformValuesOpts, PreTransformVariable,
+    PreTransformExtractOpts, PreTransformSpecOpts, PreTransformValuesOpts, PreTransformVariable,
 };
 use vegafusion_core::proto::gen::tasks::{TzConfig, Variable};
 use vegafusion_runtime::task_graph::GrpcVegaFusionRuntime;
@@ -32,13 +29,11 @@ use vegafusion_core::planning::projection_pushdown::get_column_usage as rs_get_c
 use vegafusion_core::planning::watch::WatchPlan;
 
 use vegafusion_core::task_graph::graph::ScopedVariable;
-use vegafusion_core::task_graph::task_value::{MaterializedTaskValue, TaskValue};
+use vegafusion_core::task_graph::task_value::MaterializedTaskValue;
 use vegafusion_runtime::tokio_runtime::TOKIO_THREAD_STACK_SIZE;
 
 use vegafusion_core::runtime::{PlanExecutor, VegaFusionRuntimeTrait};
 use vegafusion_runtime::task_graph::cache::VegaFusionCache;
-
-use vegafusion_common::data::scalar::ScalarValueHelpers;
 
 use crate::chart_state::PyChartState;
 use crate::utils::{parse_json_spec, process_inline_datasets};
@@ -98,15 +93,13 @@ impl PyVegaFusionRuntime {
 #[pymethods]
 impl PyVegaFusionRuntime {
     #[staticmethod]
-    #[pyo3(signature = (max_capacity=None, memory_limit=None, worker_threads=None, executor=None))]
+    #[pyo3(signature = (max_capacity=None, memory_limit=None, worker_threads=None))]
     pub fn new_embedded(
         max_capacity: Option<usize>,
         memory_limit: Option<usize>,
         worker_threads: Option<i32>,
-        executor: Option<PyObject>,
     ) -> PyResult<Self> {
-        let rust_executor = select_executor_for_vendor(None, executor)?;
-        Self::build_with_executor(max_capacity, memory_limit, worker_threads, rust_executor)
+        Self::build_with_executor(max_capacity, memory_limit, worker_threads, None)
     }
 
     #[staticmethod]
@@ -405,106 +398,6 @@ impl PyVegaFusionRuntime {
             let warnings = pythonize::pythonize(py, &warnings)?;
 
             Ok((tx_spec.into(), datasets, warnings.into()))
-        })
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (spec, local_tz, default_input_tz=None, preserve_interactivity=None, inline_datasets=None, keep_signals=None, keep_datasets=None))]
-    pub fn pre_transform_logical_plan(
-        &self,
-        py: Python,
-        spec: PyObject,
-        local_tz: String,
-        default_input_tz: Option<String>,
-        preserve_interactivity: Option<bool>,
-        inline_datasets: Option<&Bound<PyDict>>,
-        keep_signals: Option<Vec<(String, Vec<u32>)>>,
-        keep_datasets: Option<Vec<(String, Vec<u32>)>>,
-    ) -> PyResult<(PyObject, PyObject, PyObject)> {
-        let spec = parse_json_spec(spec)?;
-        let preserve_interactivity = preserve_interactivity.unwrap_or(true);
-
-        let inline_datasets = process_inline_datasets(inline_datasets)?;
-
-        let mut keep_variables: Vec<PreTransformVariable> = Vec::new();
-        for (name, scope) in keep_signals.unwrap_or_default() {
-            keep_variables.push(PreTransformVariable {
-                variable: Some(Variable::new_signal(&name)),
-                scope,
-            });
-        }
-        for (name, scope) in keep_datasets.unwrap_or_default() {
-            keep_variables.push(PreTransformVariable {
-                variable: Some(Variable::new_data(&name)),
-                scope,
-            });
-        }
-
-        let (client_spec, export_updates, warnings) = py.allow_threads(|| {
-            self.tokio_runtime
-                .block_on(self.runtime.pre_transform_logical_plan(
-                    &spec,
-                    inline_datasets,
-                    &PreTransformLogicalPlanOpts {
-                        local_tz,
-                        default_input_tz,
-                        preserve_interactivity,
-                        keep_variables,
-                    },
-                ))
-        })?;
-
-        Python::with_gil(|py| -> PyResult<(PyObject, PyObject, PyObject)> {
-            let py_spec = pythonize::pythonize(py, &client_spec)?;
-
-            let py_export_list = PyList::empty(py);
-            for export_update in export_updates {
-                let py_export_dict = PyDict::new(py);
-                py_export_dict.set_item(
-                    "namespace",
-                    pythonize::pythonize(py, &export_update.namespace)?,
-                )?;
-                py_export_dict.set_item("name", export_update.name)?;
-
-                match export_update.value {
-                    TaskValue::Plan(plan) => {
-                        // TODO: we probably want more flexible serialization format than pg_json, but protobuf
-                        // fails with our memtable, we're likely need to provide custom serializator
-                        // and deserializator for it? Or it's a bug in DataFusion
-                        let lp_str = plan.display_pg_json().to_string();
-                        py_export_dict.set_item("logical_plan", PyString::new(py, &lp_str))?;
-                    }
-                    TaskValue::Table(table) => {
-                        // Convert table to PyArrow
-                        let pytable = table.to_pyo3_arrow()?.to_pyarrow(py)?;
-                        py_export_dict.set_item("data", pytable)?;
-                    }
-                    TaskValue::Scalar(scalar) => {
-                        // Convert scalar to JSON value
-                        let json_value = scalar.to_json()?;
-                        let py_json_value = pythonize::pythonize(py, &json_value)?;
-                        py_export_dict.set_item("data", py_json_value)?;
-                    }
-                }
-
-                py_export_list.append(py_export_dict)?;
-            }
-
-            let warnings: Vec<_> = warnings
-                .iter()
-                .map(|warning| match warning.warning_type.as_ref().unwrap() {
-                    LogicalPlanWarningType::Planner(planner_warning) => {
-                        PreTransformSpecWarningSpec {
-                            typ: "Planner".to_string(),
-                            message: planner_warning.message.clone(),
-                        }
-                    }
-                })
-                .collect();
-
-            let py_warnings = pythonize::pythonize(py, &warnings)?;
-
-            Ok((py_spec.into(), py_export_list.into(), py_warnings.into()))
         })
     }
 
