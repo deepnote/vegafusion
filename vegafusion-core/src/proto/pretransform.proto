@@ -127,7 +127,7 @@ message ExportUpdate {
   string namespace = 1;
   string name = 2;
   repeated uint32 scope = 3;
-  tasks.TaskValue value = 4;
+  tasks.MaterializedTaskValue value = 4;
 }
 
 message PreTransformLogicalPlanWarning {
