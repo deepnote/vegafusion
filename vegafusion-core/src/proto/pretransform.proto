@@ -130,20 +130,8 @@ message ExportUpdate {
   tasks.TaskValue value = 4;
 }
 
-message PreTransformLogicalPlanRequest {
-  string spec = 1;
-  repeated tasks.InlineDataset inline_datasets = 2;
-  PreTransformLogicalPlanOpts opts = 3;
-}
-
 message PreTransformLogicalPlanWarning {
   oneof warning_type {
     PlannerWarning planner = 1;
   }
-}
-
-message PreTransformLogicalPlanResponse {
-  string spec = 1;
-  repeated ExportUpdate export_updates = 2;
-  repeated PreTransformLogicalPlanWarning warnings = 3;
 }
