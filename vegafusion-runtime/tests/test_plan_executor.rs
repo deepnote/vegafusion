@@ -18,23 +18,23 @@ use vegafusion_common::arrow::array::{
     StringArray, Int64Array, Float64Array, RecordBatch,
 };
 use datafusion_common::tree_node::{Transformed, TreeNode, TreeNodeRewriter};
-use datafusion_expr::{LogicalPlan as DFLogicalPlan, Expr, TableType};
-use datafusion::catalog::{TableProvider, Session};
+use datafusion_expr::{LogicalPlan as DFLogicalPlan, Expr, TableSource};
+use datafusion::catalog::TableProvider;
 use std::any::Any;
+use std::borrow::Cow;
 
-#[derive(Debug)]
-struct PanicTableProvider {
+#[derive(Debug, Clone)]
+struct SchemaOnlyTableSource {
     schema: Arc<Schema>,
 }
 
-impl PanicTableProvider {
+impl SchemaOnlyTableSource {
     fn new(schema: Arc<Schema>) -> Self {
         Self { schema }
     }
 }
 
-#[async_trait]
-impl TableProvider for PanicTableProvider {
+impl TableSource for SchemaOnlyTableSource {
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -43,18 +43,15 @@ impl TableProvider for PanicTableProvider {
         self.schema.clone()
     }
 
-    fn table_type(&self) -> TableType {
-        TableType::Base
+    fn supports_filters_pushdown(
+        &self,
+        _filters: &[&Expr],
+    ) -> datafusion_common::Result<Vec<datafusion_expr::TableProviderFilterPushDown>> {
+        Ok(vec![])
     }
 
-    async fn scan(
-        &self,
-        _state: &dyn Session,
-        _projection: Option<&Vec<usize>>,
-        _filters: &[Expr],
-        _limit: Option<usize>,
-    ) -> datafusion_common::Result<Arc<dyn datafusion::physical_plan::ExecutionPlan>> {
-        panic!("PanicTableProvider::scan() was called! This shouldn't happen.");
+    fn get_logical_plan(&self) -> Option<Cow<'_, DFLogicalPlan>> {
+        None
     }
 }
 
@@ -413,8 +410,7 @@ fn create_movies_table() -> VegaFusionTable {
 fn create_movies_logical_plan() -> LogicalPlan {
     let schema = get_movies_schema();
     
-    let panic_table = PanicTableProvider::new(schema);
-    let table_source = provider_as_source(Arc::new(panic_table));
+    let table_source = Arc::new(SchemaOnlyTableSource::new(schema));
     
     LogicalPlanBuilder::scan("movies", table_source, None)
         .unwrap()
