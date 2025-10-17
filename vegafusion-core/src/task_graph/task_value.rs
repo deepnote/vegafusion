@@ -129,7 +129,7 @@ impl TryFrom<&TaskValue> for ProtoMaterializedTaskValue {
                 data: Some(MaterializedTaskValueData::Table(table.to_ipc_bytes()?)),
             }),
             TaskValue::Plan(_) => Err(VegaFusionError::internal(
-                "TaskValue::Plan cannot be serialized to protobuf. Plans are intermediate values that should be materialized to tables before serialization.",
+                "TaskValue::Plan cannot be serialized to protobuf. Plans are intermediate values that should be materialized to tables using .to_materialized(plan_executor) before serialization.",
             )),
         }
     }
