@@ -27,7 +27,7 @@ impl TaskCall for SignalTask {
     ) -> Result<(TaskValue, Vec<TaskValue>)> {
         let config = build_compilation_config(&self.input_vars(), values, tz_config, plan_executor);
         let expression = self.expr.as_ref().unwrap();
-        let expr = compile(expression, &config, None)?;
+        let expr = compile(expression, &config, None).await?;
         let value = expr.eval_to_scalar()?;
         let task_value = TaskValue::Scalar(value);
         Ok((task_value, Default::default()))

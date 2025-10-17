@@ -4,26 +4,8 @@ package tasks;
 import "expression.proto";
 import "transforms.proto";
 
-// ## Task Value
-message TaskValue {
-  oneof data {
-  /*
-   * Representation of scalar as single column, single row, record batch in Arrow IPC format
-   */
-    bytes scalar = 1;
-
-  /*
-   * Serialized Arrow record batch in Arrow IPC format
-   */
-    bytes table = 2;
-  /*
-   * Serialized DataFusion LogicalPlan in protobuf format
-   */
-   bytes plan = 3;
-  }
-}
-
 // ## Materialized Task Value
+// Represents a fully materialized (computed) task value, either a scalar or table
 message MaterializedTaskValue {
   oneof data {
   /*
@@ -128,7 +110,7 @@ message Task {
   Variable variable = 1;
   repeated uint32 scope = 2;
   oneof task_kind {
-    TaskValue value = 3;
+    MaterializedTaskValue value = 3;
     DataValuesTask data_values = 4;
     DataUrlTask data_url = 5;
     DataSourceTask data_source = 6;

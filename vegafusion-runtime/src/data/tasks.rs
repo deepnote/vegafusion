@@ -118,7 +118,7 @@ impl TaskCall for DataUrlTask {
         let url = match self.url.as_ref().unwrap() {
             Url::String(url) => url.clone(),
             Url::Expr(expr) => {
-                let compiled = compile(expr, &config, None)?;
+                let compiled = compile(expr, &config, None).await?;
                 let url_scalar = compiled.eval_to_scalar()?;
                 url_scalar.to_scalar_string()?
             }

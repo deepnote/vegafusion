@@ -40,8 +40,8 @@ def spark():
         .getOrCreate()
     )
 
-    # TODO: this is required for properly handling temporal. We need to check if we can work around different
-    # timezone or if we should require users to setup their Spark sessions to operate in UTC
+    # This is required for properly handling temporal. Due to how Spark handles dates (which doesn't match
+    # proper SQL standart), we have to set timezone to UTC. We mention this is our docs for users.
     session.sql("SET TIME ZONE 'UTC'")
 
     sales_data_df = session.read.parquet(str(SALES_DATA_PATH))
