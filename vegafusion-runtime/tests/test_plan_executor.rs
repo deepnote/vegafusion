@@ -23,6 +23,11 @@ use datafusion::catalog::TableProvider;
 use std::any::Any;
 use std::borrow::Cow;
 
+
+// By-default, in DataFusion you construct table provider (i.e. enity which can actually load data and return 
+// to execution engine) and then create table source (schema-only entity used for logical plan) from it. To make sure
+// we don't accidentally execute logical plan bypassing plan executor, for tests we implement custom table source which
+// can't load any data. Trying to execute logical plan with this table source will result in an error.
 #[derive(Debug, Clone)]
 struct SchemaOnlyTableSource {
     schema: Arc<Schema>,
@@ -55,6 +60,8 @@ impl TableSource for SchemaOnlyTableSource {
     }
 }
 
+// Custom executor which tracks its invocations and passes actual query execution to DataFusion executor, rewriting
+// plan to replace our custom table source with mem table to make query executable.
 #[derive(Clone)]
 struct TrackingPlanExecutor {
     call_count: Arc<AtomicUsize>,
@@ -99,15 +106,18 @@ impl TreeNodeRewriter for TableRewriter {
     fn f_up(&mut self, node: Self::Node) -> datafusion_common::Result<Transformed<Self::Node>> {
         if let DFLogicalPlan::TableScan(scan) = &node {
             if scan.table_name.table() == "movies" {
-                let new_scan = DFLogicalPlan::TableScan(datafusion_expr::TableScan {
-                    table_name: scan.table_name.clone(),
-                    source: provider_as_source(self.movies_table.clone()),
-                    projection: scan.projection.clone(),
-                    projected_schema: scan.projected_schema.clone(),
-                    filters: scan.filters.clone(),
-                    fetch: scan.fetch,
-                });
-                return Ok(Transformed::yes(new_scan));
+                // Verify that the source is actually our SchemaOnlyTableSource
+                if scan.source.as_any().downcast_ref::<SchemaOnlyTableSource>().is_some() {
+                    let new_scan = DFLogicalPlan::TableScan(datafusion_expr::TableScan {
+                        table_name: scan.table_name.clone(),
+                        source: provider_as_source(self.movies_table.clone()),
+                        projection: scan.projection.clone(),
+                        projected_schema: scan.projected_schema.clone(),
+                        filters: scan.filters.clone(),
+                        fetch: scan.fetch,
+                    });
+                    return Ok(Transformed::yes(new_scan));
+                }
             }
         }
         Ok(Transformed::no(node))
@@ -154,15 +164,11 @@ async fn test_custom_executor_called_in_pre_transform_spec() {
         .unwrap();
     
     assert!(warnings.is_empty());
-    
-    println!("Transformed spec:\n{}", serde_json::to_string_pretty(&_transformed_spec).unwrap());
 
     let call_count = executor_clone.get_call_count();
-    println!("Custom executor was called {} times", call_count);
     assert!(call_count > 0, "Custom executor should have been called at least once");
     
     let plans = executor_clone.get_plans_received();
-    println!("Received {} plans", plans.len());
     assert!(!plans.is_empty(), "Should have received at least one logical plan");
 }
 
@@ -194,7 +200,6 @@ async fn test_custom_executor_called_in_pre_transform_extract() {
     assert!(warnings.is_empty());
     
     let call_count = executor_clone.get_call_count();
-    println!("Custom executor was called {} times", call_count);
     assert!(call_count > 0, "Custom executor should have been called at least once");
 }
 
@@ -234,8 +239,120 @@ async fn test_custom_executor_called_in_pre_transform_values() {
     assert_eq!(values.len(), 1);
     
     let call_count = executor_clone.get_call_count();
-    println!("Custom executor was called {} times", call_count);
     assert!(call_count > 0, "Custom executor should have been called at least once");
+}
+
+#[tokio::test]
+async fn test_bin_transform_uses_custom_executor() {
+    let tracking_executor = TrackingPlanExecutor::new();
+    let executor_clone = tracking_executor.clone();
+    
+    let runtime = VegaFusionRuntime::new(None, Some(Arc::new(tracking_executor)));
+    
+    // Spec with bin transform (similar to histogram.vg.json)
+    // Bin transform internally uses extent to compute binning boundaries,
+    // then applies binning and aggregation
+    let spec_str = r#"{
+        "$schema": "https://vega.github.io/schema/vega/v5.json",
+        "width": 200,
+        "height": 200,
+        "padding": 5,
+        "data": [
+            {
+                "name": "source_0",
+                "url": "table://movies",
+                "transform": [
+                    {
+                        "type": "extent",
+                        "field": "imdb_rating",
+                        "signal": "bin_maxbins_10_imdb_rating_extent"
+                    },
+                    {
+                        "type": "bin",
+                        "field": "imdb_rating",
+                        "as": [
+                            "bin_maxbins_10_imdb_rating",
+                            "bin_maxbins_10_imdb_rating_end"
+                        ],
+                        "signal": "bin_maxbins_10_imdb_rating_bins",
+                        "extent": {"signal": "bin_maxbins_10_imdb_rating_extent"},
+                        "maxbins": 10
+                    },
+                    {
+                        "type": "aggregate",
+                        "groupby": [
+                            "bin_maxbins_10_imdb_rating",
+                            "bin_maxbins_10_imdb_rating_end"
+                        ],
+                        "ops": ["count"],
+                        "fields": [null],
+                        "as": ["__count"]
+                    }
+                ]
+            }
+        ],
+        "marks": [
+            {
+                "type": "rect",
+                "from": {"data": "source_0"},
+                "encode": {
+                    "update": {
+                        "x": {"scale": "xscale", "field": "bin_maxbins_10_imdb_rating"},
+                        "x2": {"scale": "xscale", "field": "bin_maxbins_10_imdb_rating_end"},
+                        "y": {"scale": "yscale", "field": "__count"},
+                        "y2": {"scale": "yscale", "value": 0}
+                    }
+                }
+            }
+        ],
+        "scales": [
+            {
+                "name": "xscale",
+                "type": "linear",
+                "domain": {
+                    "signal": "[bin_maxbins_10_imdb_rating_bins.start, bin_maxbins_10_imdb_rating_bins.stop]"
+                },
+                "range": "width",
+                "bins": {"signal": "bin_maxbins_10_imdb_rating_bins"}
+            },
+            {
+                "name": "yscale",
+                "type": "linear",
+                "domain": {"data": "source_0", "field": "__count"},
+                "range": "height",
+                "nice": true
+            }
+        ]
+    }"#;
+    
+    let spec: ChartSpec = serde_json::from_str(spec_str).unwrap();
+    let inline_datasets = get_inline_datasets();
+    
+    let (_transformed_spec, warnings) = runtime
+        .pre_transform_spec(
+            &spec,
+            &inline_datasets,
+            &PreTransformSpecOpts {
+                preserve_interactivity: false,
+                local_tz: "UTC".to_string(),
+                default_input_tz: None,
+                row_limit: None,
+                keep_variables: vec![],
+            },
+        )
+        .await
+        .unwrap();
+    
+    assert!(warnings.is_empty());
+    
+    let call_count = executor_clone.get_call_count();
+    println!("Custom executor was called {} times for bin transform (extent + bin + aggregate)", call_count);
+    assert!(call_count > 0, "Custom executor should have been called for bin transform pipeline");
+    
+    // Verify that the executor received plans
+    let plans = executor_clone.get_plans_received();
+    assert!(!plans.is_empty(), "Should have received at least one logical plan for bin processing");
+    println!("✓ Bin transform successfully used custom executor");
 }
 
 fn get_simple_spec() -> ChartSpec {
