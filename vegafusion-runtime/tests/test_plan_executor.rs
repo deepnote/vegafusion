@@ -24,6 +24,9 @@ use std::any::Any;
 use std::borrow::Cow;
 
 
+// TODO: test that when passed mixed data (both table and plan) as input, table is handled by DataFusion and executor
+// is bothered only with plan execution
+
 // By-default, in DataFusion you construct table provider (i.e. enity which can actually load data and return 
 // to execution engine) and then create table source (schema-only entity used for logical plan) from it. To make sure
 // we don't accidentally execute logical plan bypassing plan executor, for tests we implement custom table source which
