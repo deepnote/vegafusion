@@ -1,4 +1,4 @@
-name: build_test
+name: 'PR checks'
 on:
   workflow_dispatch:
   pull_request:

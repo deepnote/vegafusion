@@ -1,4 +1,4 @@
-name: release
+name: 'Release'
 on:
   workflow_dispatch:
     inputs:
@@ -29,7 +29,7 @@ jobs:
       version: ${{ steps.get_version.outputs.version }}
     steps:
       - name: Check out repository code
-        uses: actions/checkout@v4.2.2
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
       - name: Get version from pyproject.toml
         id: get_version
         run: |
@@ -37,7 +37,7 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Version: $VERSION"
       - name: Download all wheel artifacts
-        uses: actions/download-artifact@v4.1.8
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: python-wheels-*
           path: wheels/
@@ -64,7 +64,7 @@ jobs:
       id-token: write
     steps:
       - name: Download all wheel artifacts
-        uses: actions/download-artifact@v4.1.8
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: python-wheels-*
           path: dist/
@@ -72,7 +72,7 @@ jobs:
       - name: List files to be uploaded
         run: ls -lR dist/
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e # v1.13.0
         with:
           repository-url: ${{ inputs.pypi_environment == 'testpypi' && 'https://test.pypi.org/legacy/' || '' }}
           skip-existing: true
