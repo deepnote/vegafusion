@@ -1,8 +1,14 @@
-name: build_test
+name: build-and-test
+
 on:
-  workflow_dispatch:
-  pull_request:
-    types: [opened, synchronize]
+  workflow_call:
+    inputs:
+      build-all-platforms:
+        description: 'Build wheels for all platforms (Linux ARM64, Windows, macOS)'
+        required: false
+        type: boolean
+        default: true
+
 jobs:
   check-rust:
     runs-on: ubuntu-22.04
@@ -91,8 +97,6 @@ jobs:
         run: |
           pixi run type-check-py -v
 
-  # Use maturin action to build linux wheels within proper manylinux compatible containers
-  # (This is why we don't use the pixi "build-py" action)
   build-vegafusion-python-linux-64:
     runs-on: ubuntu-latest
     steps:
@@ -118,6 +122,7 @@ jobs:
           if-no-files-found: error
 
   build-vegafusion-python-linux-arm64:
+    if: inputs.build-all-platforms
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository code
@@ -142,6 +147,7 @@ jobs:
           if-no-files-found: error
 
   build-vegafusion-python-win-64:
+    if: inputs.build-all-platforms
     runs-on: windows-2022
     steps:
       - name: Check out repository code
@@ -173,6 +179,7 @@ jobs:
           if-no-files-found: error
 
   build-vegafusion-python-osx-64:
+    if: inputs.build-all-platforms
     runs-on: macos-13
     steps:
       - name: Check out repository code
@@ -204,6 +211,7 @@ jobs:
           if-no-files-found: error
 
   build-vegafusion-python-osx-arm64:
+    if: inputs.build-all-platforms
     runs-on: macos-14
     steps:
       - name: Check out repository code
@@ -274,8 +282,6 @@ jobs:
         working-directory: vegafusion-python/
         env:
           VEGAFUSION_TEST_HEADLESS: 1
-        # Run only Spark end-to-end tests, as other tests interact with Altair which requires
-        # exact `vegafusion` library to be installed. Since our lib has different name, it fails.
         run: pytest -vv -rA tests/test_spark_e2e.py
       - name: Upload test artifacts
         uses: actions/upload-artifact@v4.4.3
@@ -285,22 +291,3 @@ jobs:
           path: |
             vegafusion-python/tests/output/*
 
-  # Bundle all python wheels into a single artifact for easier downloading
-  bundle-vegafusion-python-wheels:
-    needs: [
-        # jobs that build but don't have test dependencies
-        build-vegafusion-python-linux-arm64,
-        build-vegafusion-python-osx-64,
-
-        # job that tests the wheels
-        test-vegafusion-python-linux-64,
-      ]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Merge Wheel Artifacts
-        uses: actions/upload-artifact/merge@v4.4.3
-        with:
-          name: vegafusion-python-wheels-all
-          pattern: python-wheels-*
-          delete-merged: true
-          separate-directories: false
