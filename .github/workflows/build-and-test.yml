@@ -8,7 +8,9 @@ on:
         required: false
         type: boolean
         default: true
-
+permissions:
+  contents: read
+  actions: write
 jobs:
   check-rust:
     runs-on: ubuntu-22.04

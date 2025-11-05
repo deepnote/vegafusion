@@ -4,8 +4,13 @@ on:
   pull_request:
     types: [opened, synchronize]
 
+permissions:
+  contents: read
+
 jobs:
   build-and-test:
     uses: ./.github/workflows/build-and-test.yml
     with:
       build-all-platforms: false
+    permissions:
+      contents: read
