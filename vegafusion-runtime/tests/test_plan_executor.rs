@@ -1,6 +1,15 @@
 use async_trait::async_trait;
+use datafusion::catalog::TableProvider;
+use datafusion::datasource::{provider_as_source, MemTable};
+use datafusion_common::tree_node::{Transformed, TreeNode, TreeNodeRewriter};
+use datafusion_expr::LogicalPlanBuilder;
+use datafusion_expr::{Expr, LogicalPlan as DFLogicalPlan, TableSource};
+use std::any::Any;
+use std::borrow::Cow;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use vegafusion_common::arrow::array::{Float64Array, Int64Array, RecordBatch, StringArray};
+use vegafusion_common::arrow::datatypes::{DataType, Field, Schema};
 use vegafusion_common::data::table::VegaFusionTable;
 use vegafusion_common::datafusion_expr::LogicalPlan;
 use vegafusion_common::error::Result;
@@ -8,26 +17,11 @@ use vegafusion_core::data::dataset::VegaFusionDataset;
 use vegafusion_core::proto::gen::pretransform::PreTransformSpecOpts;
 use vegafusion_core::runtime::{PlanExecutor, VegaFusionRuntimeTrait};
 use vegafusion_core::spec::chart::ChartSpec;
+use vegafusion_runtime::datafusion::context::make_datafusion_context;
 use vegafusion_runtime::plan_executor::DataFusionPlanExecutor;
 use vegafusion_runtime::task_graph::runtime::VegaFusionRuntime;
-use vegafusion_runtime::datafusion::context::make_datafusion_context;
-use datafusion::datasource::{provider_as_source, MemTable};
-use datafusion_expr::LogicalPlanBuilder;
-use vegafusion_common::arrow::datatypes::{DataType, Field, Schema};
-use vegafusion_common::arrow::array::{
-    StringArray, Int64Array, Float64Array, RecordBatch,
-};
-use datafusion_common::tree_node::{Transformed, TreeNode, TreeNodeRewriter};
-use datafusion_expr::{LogicalPlan as DFLogicalPlan, Expr, TableSource};
-use datafusion::catalog::TableProvider;
-use std::any::Any;
-use std::borrow::Cow;
 
-
-// TODO: test that when passed mixed data (both table and plan) as input, table is handled by DataFusion and executor
-// is bothered only with plan execution
-
-// By-default, in DataFusion you construct table provider (i.e. enity which can actually load data and return 
+// By-default, in DataFusion you construct table provider (i.e. enity which can actually load data and return
 // to execution engine) and then create table source (schema-only entity used for logical plan) from it. To make sure
 // we don't accidentally execute logical plan bypassing plan executor, for tests we implement custom table source which
 // can't load any data. Trying to execute logical plan with this table source will result in an error.
@@ -68,7 +62,6 @@ impl TableSource for SchemaOnlyTableSource {
 #[derive(Clone)]
 struct TrackingPlanExecutor {
     call_count: Arc<AtomicUsize>,
-    plans_received: Arc<Mutex<Vec<LogicalPlan>>>,
     movies_table: Arc<dyn TableProvider>,
     fallback_executor: Arc<DataFusionPlanExecutor>,
 }
@@ -76,15 +69,15 @@ struct TrackingPlanExecutor {
 impl TrackingPlanExecutor {
     fn new() -> Self {
         let ctx = Arc::new(make_datafusion_context());
-        
+
         let movies_table = create_movies_table();
         let schema = movies_table.schema.clone();
         let batches = movies_table.batches.clone();
-        let mem_table = Arc::new(MemTable::try_new(schema, vec![batches]).unwrap()) as Arc<dyn TableProvider>;
-        
+        let mem_table =
+            Arc::new(MemTable::try_new(schema, vec![batches]).unwrap()) as Arc<dyn TableProvider>;
+
         Self {
             call_count: Arc::new(AtomicUsize::new(0)),
-            plans_received: Arc::new(Mutex::new(Vec::new())),
             movies_table: mem_table,
             fallback_executor: Arc::new(DataFusionPlanExecutor::new(ctx)),
         }
@@ -92,10 +85,6 @@ impl TrackingPlanExecutor {
 
     fn get_call_count(&self) -> usize {
         self.call_count.load(Ordering::SeqCst)
-    }
-
-    fn get_plans_received(&self) -> Vec<LogicalPlan> {
-        self.plans_received.lock().unwrap().clone()
     }
 }
 
@@ -110,7 +99,12 @@ impl TreeNodeRewriter for TableRewriter {
         if let DFLogicalPlan::TableScan(scan) = &node {
             if scan.table_name.table() == "movies" {
                 // Verify that the source is actually our SchemaOnlyTableSource
-                if scan.source.as_any().downcast_ref::<SchemaOnlyTableSource>().is_some() {
+                if scan
+                    .source
+                    .as_any()
+                    .downcast_ref::<SchemaOnlyTableSource>()
+                    .is_some()
+                {
                     let new_scan = DFLogicalPlan::TableScan(datafusion_expr::TableScan {
                         table_name: scan.table_name.clone(),
                         source: provider_as_source(self.movies_table.clone()),
@@ -131,12 +125,12 @@ impl TreeNodeRewriter for TableRewriter {
 impl PlanExecutor for TrackingPlanExecutor {
     async fn execute_plan(&self, plan: LogicalPlan) -> Result<VegaFusionTable> {
         self.call_count.fetch_add(1, Ordering::SeqCst);
-        
-        self.plans_received.lock().unwrap().push(plan.clone());
-        
-        let mut rewriter = TableRewriter { movies_table: self.movies_table.clone() };
+
+        let mut rewriter = TableRewriter {
+            movies_table: self.movies_table.clone(),
+        };
         let rewritten_plan = plan.rewrite(&mut rewriter).unwrap().data;
-        
+
         self.fallback_executor.execute_plan(rewritten_plan).await
     }
 }
@@ -145,12 +139,12 @@ impl PlanExecutor for TrackingPlanExecutor {
 async fn test_custom_executor_called_in_pre_transform_spec() {
     let tracking_executor = TrackingPlanExecutor::new();
     let executor_clone = tracking_executor.clone();
-    
+
     let runtime = VegaFusionRuntime::new(None, Some(Arc::new(tracking_executor)));
-    
+
     let spec = get_simple_spec();
     let inline_datasets = get_inline_datasets();
-    
+
     let (_transformed_spec, warnings) = runtime
         .pre_transform_spec(
             &spec,
@@ -165,26 +159,26 @@ async fn test_custom_executor_called_in_pre_transform_spec() {
         )
         .await
         .unwrap();
-    
+
     assert!(warnings.is_empty());
 
     let call_count = executor_clone.get_call_count();
-    assert!(call_count > 0, "Custom executor should have been called at least once");
-    
-    let plans = executor_clone.get_plans_received();
-    assert!(!plans.is_empty(), "Should have received at least one logical plan");
+    assert!(
+        call_count > 0,
+        "Custom executor should have been called at least once"
+    );
 }
 
 #[tokio::test]
 async fn test_custom_executor_called_in_pre_transform_extract() {
     let tracking_executor = TrackingPlanExecutor::new();
     let executor_clone = tracking_executor.clone();
-    
+
     let runtime = VegaFusionRuntime::new(None, Some(Arc::new(tracking_executor)));
-    
+
     let spec = get_simple_spec();
     let inline_datasets = get_inline_datasets();
-    
+
     let (_transformed_spec, _datasets, warnings) = runtime
         .pre_transform_extract(
             &spec,
@@ -199,23 +193,26 @@ async fn test_custom_executor_called_in_pre_transform_extract() {
         )
         .await
         .unwrap();
-    
+
     assert!(warnings.is_empty());
-    
+
     let call_count = executor_clone.get_call_count();
-    assert!(call_count > 0, "Custom executor should have been called at least once");
+    assert!(
+        call_count > 0,
+        "Custom executor should have been called at least once"
+    );
 }
 
 #[tokio::test]
 async fn test_custom_executor_called_in_pre_transform_values() {
     let tracking_executor = TrackingPlanExecutor::new();
     let executor_clone = tracking_executor.clone();
-    
+
     let runtime = VegaFusionRuntime::new(None, Some(Arc::new(tracking_executor)));
-    
+
     let spec = get_simple_spec();
     let inline_datasets = get_inline_datasets();
-    
+
     let variables = vec![(
         vegafusion_core::proto::gen::tasks::Variable {
             namespace: vegafusion_core::proto::gen::tasks::VariableNamespace::Data as i32,
@@ -223,7 +220,7 @@ async fn test_custom_executor_called_in_pre_transform_values() {
         },
         vec![],
     )];
-    
+
     let (values, warnings) = runtime
         .pre_transform_values(
             &spec,
@@ -237,24 +234,27 @@ async fn test_custom_executor_called_in_pre_transform_values() {
         )
         .await
         .unwrap();
-    
+
     assert!(warnings.is_empty());
     assert_eq!(values.len(), 1);
-    
+
     let call_count = executor_clone.get_call_count();
-    assert!(call_count > 0, "Custom executor should have been called at least once");
+    assert!(
+        call_count > 0,
+        "Custom executor should have been called at least once"
+    );
 }
 
+// Bin transform internally uses data from extent transform to compute binning boundaries.
+// This requires materializing extend data before binning can be done, which creates kind of chain
+// where binning logical plan will depend on materialized results of extent.
 #[tokio::test]
 async fn test_bin_transform_uses_custom_executor() {
     let tracking_executor = TrackingPlanExecutor::new();
     let executor_clone = tracking_executor.clone();
-    
+
     let runtime = VegaFusionRuntime::new(None, Some(Arc::new(tracking_executor)));
-    
-    // Spec with bin transform (similar to histogram.vg.json)
-    // Bin transform internally uses extent to compute binning boundaries,
-    // then applies binning and aggregation
+
     let spec_str = r#"{
         "$schema": "https://vega.github.io/schema/vega/v5.json",
         "width": 200,
@@ -327,10 +327,10 @@ async fn test_bin_transform_uses_custom_executor() {
             }
         ]
     }"#;
-    
+
     let spec: ChartSpec = serde_json::from_str(spec_str).unwrap();
     let inline_datasets = get_inline_datasets();
-    
+
     let (_transformed_spec, warnings) = runtime
         .pre_transform_spec(
             &spec,
@@ -345,17 +345,110 @@ async fn test_bin_transform_uses_custom_executor() {
         )
         .await
         .unwrap();
-    
+
     assert!(warnings.is_empty());
-    
+
     let call_count = executor_clone.get_call_count();
-    println!("Custom executor was called {} times for bin transform (extent + bin + aggregate)", call_count);
-    assert!(call_count > 0, "Custom executor should have been called for bin transform pipeline");
-    
-    // Verify that the executor received plans
-    let plans = executor_clone.get_plans_received();
-    assert!(!plans.is_empty(), "Should have received at least one logical plan for bin processing");
-    println!("✓ Bin transform successfully used custom executor");
+
+    assert_eq!(
+        call_count, 3,
+        "Custom executor should have been called 3 times: \
+        (1) extent transform for binning boundaries, \
+        (2) bin + aggregate transforms, \
+        (3) scale domain computation for yscale"
+    );
+}
+
+#[tokio::test]
+async fn test_mixed_data_only_executes_plans() {
+    let tracking_executor = TrackingPlanExecutor::new();
+    let executor_clone = tracking_executor.clone();
+
+    let runtime = VegaFusionRuntime::new(None, Some(Arc::new(tracking_executor)));
+
+    let spec_str = r#"{
+        "$schema": "https://vega.github.io/schema/vega/v5.json",
+        "width": 400,
+        "height": 200,
+        "padding": 5,
+        "data": [
+            {
+                "name": "source_table",
+                "url": "table://movies_table",
+                "transform": [
+                    {
+                        "type": "aggregate",
+                        "groupby": ["genre"],
+                        "ops": ["count"],
+                        "fields": [null],
+                        "as": ["count_from_table"]
+                    }
+                ]
+            },
+            {
+                "name": "source_plan",
+                "url": "table://movies_plan",
+                "transform": [
+                    {
+                        "type": "aggregate",
+                        "groupby": ["genre"],
+                        "ops": ["count"],
+                        "fields": [null],
+                        "as": ["count_from_plan"]
+                    }
+                ]
+            }
+        ],
+        "marks": [
+            {
+                "type": "rect",
+                "from": {"data": "source_table"}
+            },
+            {
+                "type": "rect",
+                "from": {"data": "source_plan"}
+            }
+        ]
+    }"#;
+
+    let spec: ChartSpec = serde_json::from_str(spec_str).unwrap();
+
+    let movies_table = create_movies_table();
+    let movies_plan = create_movies_logical_plan();
+
+    let mut inline_datasets = std::collections::HashMap::new();
+    inline_datasets.insert(
+        "movies_table".to_string(),
+        VegaFusionDataset::from_table(movies_table, None).unwrap(),
+    );
+    inline_datasets.insert(
+        "movies_plan".to_string(),
+        VegaFusionDataset::from_plan(movies_plan),
+    );
+
+    let (_transformed_spec, warnings) = runtime
+        .pre_transform_spec(
+            &spec,
+            &inline_datasets,
+            &PreTransformSpecOpts {
+                preserve_interactivity: false,
+                local_tz: "UTC".to_string(),
+                default_input_tz: None,
+                row_limit: None,
+                keep_variables: vec![],
+            },
+        )
+        .await
+        .unwrap();
+
+    assert!(warnings.is_empty());
+
+    let call_count = executor_clone.get_call_count();
+
+    assert_eq!(
+        call_count, 1,
+        "Custom executor should have been called only once"
+    );
 }
 
 fn get_simple_spec() -> ChartSpec {
@@ -409,7 +502,7 @@ fn get_simple_spec() -> ChartSpec {
             }
         ]
     }"#;
-    
+
     serde_json::from_str(spec_str).unwrap()
 }
 
@@ -429,7 +522,7 @@ fn get_movies_schema() -> Arc<Schema> {
 #[allow(dead_code)]
 fn create_movies_table() -> VegaFusionTable {
     let schema = get_movies_schema();
-    
+
     let batch = RecordBatch::try_new(
         schema.clone(),
         vec![
@@ -446,16 +539,8 @@ fn create_movies_table() -> VegaFusionTable {
                 "The Prestige",
             ])),
             Arc::new(StringArray::from(vec![
-                "Drama",
-                "Action",
-                "Action",
-                "Crime",
-                "Drama",
-                "Action",
-                "Crime",
-                "Thriller",
-                "Sci-Fi",
-                "Thriller",
+                "Drama", "Action", "Action", "Crime", "Drama", "Action", "Crime", "Thriller",
+                "Sci-Fi", "Thriller",
             ])),
             Arc::new(StringArray::from(vec![
                 Some("Frank Darabont"),
@@ -473,16 +558,8 @@ fn create_movies_table() -> VegaFusionTable {
                 1994, 2008, 2010, 1994, 1994, 1999, 1990, 1991, 2014, 2006,
             ])),
             Arc::new(Int64Array::from(vec![
-                28341469,
-                1004558444,
-                836848102,
-                213928762,
-                678226465,
-                463517383,
-                46836394,
-                272742922,
-                677471339,
-                109676311,
+                28341469, 1004558444, 836848102, 213928762, 678226465, 463517383, 46836394,
+                272742922, 677471339, 109676311,
             ])),
             Arc::new(Int64Array::from(vec![
                 Some(25000000),
@@ -523,15 +600,15 @@ fn create_movies_table() -> VegaFusionTable {
         ],
     )
     .unwrap();
-    
+
     VegaFusionTable::from(batch)
 }
 
 fn create_movies_logical_plan() -> LogicalPlan {
     let schema = get_movies_schema();
-    
+
     let table_source = Arc::new(SchemaOnlyTableSource::new(schema));
-    
+
     LogicalPlanBuilder::scan("movies", table_source, None)
         .unwrap()
         .build()
@@ -541,9 +618,8 @@ fn create_movies_logical_plan() -> LogicalPlan {
 fn get_inline_datasets() -> std::collections::HashMap<String, VegaFusionDataset> {
     let logical_plan = create_movies_logical_plan();
     let dataset = VegaFusionDataset::from_plan(logical_plan);
-    
+
     let mut datasets = std::collections::HashMap::new();
     datasets.insert("movies".to_string(), dataset);
     datasets
 }
-
