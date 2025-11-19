@@ -246,32 +246,6 @@ class VegaFusionRuntime:
             )
         return self._runtime
 
-    @classmethod
-    def new_vendor(
-        cls,
-        vendor: Literal["datafusion", "sparksql"],
-        executor: PlanExecutor | None = None,
-        cache_capacity: int = 64,
-        memory_limit: int | None = None,
-        worker_threads: int | None = None,
-    ) -> VegaFusionRuntime:
-        from vegafusion._vegafusion import PyVegaFusionRuntime
-
-        inst = cls(cache_capacity, memory_limit, worker_threads)
-        if inst.memory_limit is None:
-            inst.memory_limit = get_virtual_memory() // 2
-        if inst.worker_threads is None:
-            inst.worker_threads = get_cpu_count()
-
-        inst._runtime = PyVegaFusionRuntime.new_embedded_vendor(
-            inst.cache_capacity,
-            inst.memory_limit,
-            inst.worker_threads,
-            vendor,
-            executor,
-        )
-        return inst
-
     def grpc_connect(self, url: str) -> None:
         """
         Connect to a VegaFusion server over gRPC at the provided gRPC url
@@ -324,8 +298,6 @@ class VegaFusionRuntime:
             if (pa is not None and isinstance(value, pa.Schema)) or hasattr(
                 value, "__arrow_c_schema__"
             ):
-                # Handle PyArrow Schema - convert to arro3 Schema
-                # This allows for planning without requiring actual data
                 imported_inline_datasets[name] = Schema.from_arrow(value)
             elif pd is not None and pa is not None and isinstance(value, pd.DataFrame):
                 # rename to help mypy

@@ -1,7 +1,5 @@
 mod chart_state;
 mod utils;
-mod vendor;
-
 use lazy_static::lazy_static;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -37,7 +35,6 @@ use vegafusion_runtime::task_graph::cache::VegaFusionCache;
 
 use crate::chart_state::PyChartState;
 use crate::utils::{parse_json_spec, process_inline_datasets};
-use crate::vendor::select_executor_for_vendor;
 
 static INIT: Once = Once::new();
 
@@ -100,19 +97,6 @@ impl PyVegaFusionRuntime {
         worker_threads: Option<i32>,
     ) -> PyResult<Self> {
         Self::build_with_executor(max_capacity, memory_limit, worker_threads, None)
-    }
-
-    #[staticmethod]
-    #[pyo3(signature = (max_capacity=None, memory_limit=None, worker_threads=None, vendor=None, executor=None))]
-    pub fn new_embedded_vendor(
-        max_capacity: Option<usize>,
-        memory_limit: Option<usize>,
-        worker_threads: Option<i32>,
-        vendor: Option<String>,
-        executor: Option<PyObject>,
-    ) -> PyResult<Self> {
-        let rust_executor = select_executor_for_vendor(vendor, executor)?;
-        Self::build_with_executor(max_capacity, memory_limit, worker_threads, rust_executor)
     }
 
     #[staticmethod]
