@@ -39,16 +39,6 @@ impl TaskValue {
         }
     }
 
-    pub fn as_materialized(&self) -> Result<MaterializedTaskValue> {
-        match self {
-            TaskValue::Scalar(scalar) => Ok(MaterializedTaskValue::Scalar(scalar.clone())),
-            TaskValue::Table(table) => Ok(MaterializedTaskValue::Table(table.clone())),
-            TaskValue::Plan(_) => Err(VegaFusionError::internal(
-                "TaskValue::Plan cannot be materialized via as_materialized; call to_materialized with a PlanExecutor",
-            )),
-        }
-    }
-
     pub fn size_of(&self) -> usize {
         let inner_size = match self {
             TaskValue::Scalar(scalar) => inner_size_of_scalar(scalar),
