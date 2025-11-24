@@ -342,8 +342,8 @@ impl VegaFusionTable {
             let hash = vf_table.get_hash();
 
             // Now rechunk for better multithreaded efficiency with DataFusion
-            let seq = PyList::new(py, vec![("max_chunksize", 8096)])?;
-            let kwargs = PyDict::from_sequence(seq.as_any())?;
+            let kwargs = PyDict::new(py);
+            kwargs.set_item("max_chunksize", 8096)?;
 
             let rechunked_table = data
                 .call_method("rechunk", (), Some(&kwargs))?
