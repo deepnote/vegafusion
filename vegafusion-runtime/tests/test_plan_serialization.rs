@@ -5,25 +5,27 @@
 // CteWorkTable are. We also can't use a custom LogicalExtensionCodec because
 // datafusion-python hardcodes DefaultLogicalExtensionCodec in from_proto/to_proto.
 //
-// Solution: before serialization, rewrite EmptyTable scans into ViewTable scans.
-// ViewTable wraps an inner logical plan, so we encode the schema as:
-//   ViewTable(Projection(CAST(NULL AS <type>) AS <col>, ...) -> EmptyRelation)
+// Solution: before serialization, rewrite EmptyTable scans into ListingTable scans
+// pointing at a dummy path. ListingTable serializes natively — schema, paths, and
+// format all go into the proto. After deserialization, rewrite back to EmptyTable.
 //
-// After deserialization (Rust or Python side), the inverse rewrite restores
-// EmptyTable scans. See test_plan_deserialization.py for the Python counterpart.
-//
-// Caveat: nullability is lost — CAST(NULL AS T) makes all fields nullable.
-// This is acceptable since these plans are schema-only placeholders.
+// See test_plan_deserialization.py for the Python counterpart.
 
-use datafusion::catalog::view::ViewTable;
 use datafusion::datasource::empty::EmptyTable;
+use datafusion::datasource::file_format::parquet::ParquetFormat;
+use datafusion::datasource::listing::{
+    ListingOptions, ListingTable, ListingTableConfig, ListingTableUrl,
+};
 use datafusion::datasource::provider_as_source;
 use datafusion_common::tree_node::{Transformed, TreeNode, TreeNodeRewriter};
-use datafusion_expr::{cast, lit, Expr, LogicalPlanBuilder};
 use datafusion_expr::LogicalPlan;
+use datafusion_expr::LogicalPlanBuilder;
 use datafusion_proto::bytes::logical_plan_to_bytes;
 use std::sync::Arc;
 use vegafusion_common::arrow::datatypes::{DataType, Field, Schema};
+
+
+const PLACEHOLDER_URL: &str = "file:///vegafusion/placeholder.parquet";
 
 fn get_movies_schema() -> Arc<Schema> {
     Arc::new(Schema::new(vec![
@@ -45,11 +47,11 @@ fn create_empty_table_logical_plan() -> LogicalPlan {
         .unwrap()
 }
 
-// --- Pre-serialization rewrite: EmptyTable -> ViewTable ---
+// --- Pre-serialization rewrite: EmptyTable -> ListingTable ---
 
-struct EmptyTableToViewRewriter;
+struct EmptyTableToListingRewriter;
 
-impl TreeNodeRewriter for EmptyTableToViewRewriter {
+impl TreeNodeRewriter for EmptyTableToListingRewriter {
     type Node = LogicalPlan;
 
     fn f_up(&mut self, node: Self::Node) -> datafusion_common::Result<Transformed<Self::Node>> {
@@ -63,26 +65,17 @@ impl TreeNodeRewriter for EmptyTableToViewRewriter {
             if is_empty_table {
                 let schema = scan.source.schema();
 
-                // Encode each field as CAST(NULL AS <type>) AS <name>.
-                // This is the only way to carry column names + types through
-                // a plan that serializes with the default codec.
-                let exprs: Vec<Expr> = schema
-                    .fields()
-                    .iter()
-                    .map(|f| {
-                        cast(lit(datafusion_common::ScalarValue::Null), f.data_type().clone())
-                            .alias(f.name())
-                    })
-                    .collect();
+                let table_url = ListingTableUrl::parse(PLACEHOLDER_URL)
+                    .map_err(|e| datafusion_common::DataFusionError::Internal(e.to_string()))?;
+                let listing_options = ListingOptions::new(Arc::new(ParquetFormat::default()));
+                let config = ListingTableConfig::new(table_url)
+                    .with_listing_options(listing_options)
+                    .with_schema(schema);
+                let listing_table = Arc::new(ListingTable::try_new(config)?);
 
-                let inner_plan = LogicalPlanBuilder::empty(false)
-                    .project(exprs)?
-                    .build()?;
-
-                let view = Arc::new(ViewTable::new(inner_plan, None));
                 let new_plan = LogicalPlanBuilder::scan(
                     scan.table_name.clone(),
-                    provider_as_source(view),
+                    provider_as_source(listing_table),
                     scan.projection.clone(),
                 )?
                 .build()?;
@@ -94,59 +87,31 @@ impl TreeNodeRewriter for EmptyTableToViewRewriter {
     }
 }
 
-// --- Post-deserialization rewrite: ViewTable pattern -> EmptyTable ---
+// --- Post-deserialization rewrite: ListingTable -> EmptyTable ---
 //
-// After proto round-trip, ViewTable scans become SubqueryAlias nodes
-// (LogicalPlanBuilder::scan inlines the view's inner plan):
-//
-//   SubqueryAlias: <table_name>
-//     Projection: CAST(NULL AS <type>) AS <col>, ...
-//       EmptyRelation
+// After proto round-trip, the plan is still a plain TableScan with a
+// ListingTable provider pointing at PLACEHOLDER_URL. We detect that
+// and swap it back to EmptyTable.
 
-struct ViewToEmptyTableRewriter;
+struct ListingToEmptyTableRewriter;
 
-impl ViewToEmptyTableRewriter {
-    fn is_null_projection_over_empty(plan: &LogicalPlan) -> bool {
-        if let LogicalPlan::Projection(proj) = plan {
-            if let LogicalPlan::EmptyRelation(_) = proj.input.as_ref() {
-                return proj.expr.iter().all(|e| {
-                    matches!(e, Expr::Alias(alias) if matches!(alias.expr.as_ref(), Expr::Cast(_)))
-                });
-            }
-        }
-        false
-    }
-}
-
-impl TreeNodeRewriter for ViewToEmptyTableRewriter {
+impl TreeNodeRewriter for ListingToEmptyTableRewriter {
     type Node = LogicalPlan;
 
     fn f_up(&mut self, node: Self::Node) -> datafusion_common::Result<Transformed<Self::Node>> {
-        // Post-deserialization: match the inlined SubqueryAlias pattern
-        if let LogicalPlan::SubqueryAlias(alias) = &node {
-            if Self::is_null_projection_over_empty(alias.input.as_ref()) {
-                let schema = node.schema().inner().clone();
-                let empty = Arc::new(EmptyTable::new(schema));
-                let new_plan = LogicalPlanBuilder::scan(
-                    alias.alias.clone(),
-                    provider_as_source(empty),
-                    None,
-                )?
-                .build()?;
-
-                return Ok(Transformed::yes(new_plan));
-            }
-        }
-
-        // Pre-deserialization: match TableScan still holding a ViewTable provider
         if let LogicalPlan::TableScan(scan) = &node {
             let provider = datafusion::datasource::source_as_provider(&scan.source).ok();
-            let is_view_table = provider
-                .as_ref()
-                .map(|p| p.as_any().downcast_ref::<ViewTable>().is_some())
-                .unwrap_or(false);
+            let is_placeholder_listing = provider.as_ref().map_or(false, |p| {
+                p.as_any()
+                    .downcast_ref::<ListingTable>()
+                    .map_or(false, |lt| {
+                        lt.table_paths()
+                            .iter()
+                            .any(|p| p.as_str() == PLACEHOLDER_URL)
+                    })
+            });
 
-            if is_view_table {
+            if is_placeholder_listing {
                 let schema = scan.source.schema();
                 let empty = Arc::new(EmptyTable::new(schema));
                 let new_plan = LogicalPlanBuilder::scan(
@@ -164,17 +129,17 @@ impl TreeNodeRewriter for ViewToEmptyTableRewriter {
 }
 
 #[test]
-fn test_logical_plan_rewrite_serialize_roundtrip() {
+fn test_listing_table_rewrite_serialize_roundtrip() {
     let original_plan = create_empty_table_logical_plan();
     let original_schema = original_plan.schema().clone();
     println!("Original plan (EmptyTable):\n{original_plan}\n");
 
     // Rewrite for serialization
     let serializable_plan = original_plan
-        .rewrite(&mut EmptyTableToViewRewriter)
-        .expect("rewrite to ViewTable should succeed")
+        .rewrite(&mut EmptyTableToListingRewriter)
+        .expect("rewrite to ListingTable should succeed")
         .data;
-    println!("Rewritten plan (ViewTable):\n{serializable_plan}\n");
+    println!("Rewritten plan (ListingTable):\n{serializable_plan}\n");
 
     // Serialize and write to disk (consumed by test_plan_deserialization.py)
     let bytes = logical_plan_to_bytes(&serializable_plan).expect("serialization should succeed");
@@ -185,26 +150,36 @@ fn test_logical_plan_rewrite_serialize_roundtrip() {
         .join("plan_bytes.bin");
     std::fs::write(&out_path, &bytes).expect("failed to write plan bytes");
 
-    // Deserialize and restore
+    // Deserialize
     let ctx = datafusion::prelude::SessionContext::new();
     let deserialized =
         datafusion_proto::bytes::logical_plan_from_bytes(&bytes, &ctx.task_ctx())
             .expect("deserialization should succeed");
-    println!("Deserialized plan (ViewTable):\n{deserialized}\n");
+    println!("Deserialized plan (ListingTable):\n{deserialized}\n");
 
+    // Verify it stays as a TableScan (no inlining like ViewTable)
+    assert!(matches!(&deserialized, LogicalPlan::TableScan(_)));
+
+    // Restore EmptyTable
     let restored_plan = deserialized
-        .rewrite(&mut ViewToEmptyTableRewriter)
+        .rewrite(&mut ListingToEmptyTableRewriter)
         .expect("rewrite to EmptyTable should succeed")
         .data;
     println!("Restored plan (EmptyTable):\n{restored_plan}\n");
 
-    // Verify field names and types survive the roundtrip
+    // Verify full schema fidelity including nullability
     let original_fields = original_schema.inner();
     let restored_fields = restored_plan.schema().inner();
     assert_eq!(original_fields.fields().len(), restored_fields.fields().len());
     for (orig, restored) in original_fields.fields().iter().zip(restored_fields.fields()) {
         assert_eq!(orig.name(), restored.name());
         assert_eq!(orig.data_type(), restored.data_type());
+        assert_eq!(
+            orig.is_nullable(),
+            restored.is_nullable(),
+            "nullability mismatch for field '{}'",
+            orig.name()
+        );
     }
 
     // Verify the restored plan uses EmptyTable
@@ -218,9 +193,76 @@ fn test_logical_plan_rewrite_serialize_roundtrip() {
         panic!("Restored plan should be a TableScan");
     }
 
-    // Verify the restored plan unparses to clean SQL
     let sql = datafusion_sql::unparser::plan_to_sql(&restored_plan)
         .expect("unparse to SQL should succeed");
     println!("SQL:\n{sql}");
     // => SELECT * FROM movies
+}
+
+// Same roundtrip but with a more complex plan: filter + sort on top of
+// the EmptyTable scan, built via DataFrame API. Verifies that the rewriters
+// only touch the leaf TableScan and leave the rest of the plan intact.
+#[test]
+fn test_complex_plan_rewrite_serialize_roundtrip() {
+    use datafusion::prelude::*;
+
+    let ctx = SessionContext::new();
+
+    // Build a plan via DataFrame API: scan -> filter -> sort
+    let scan_plan = create_empty_table_logical_plan();
+    let df = DataFrame::new(ctx.state(), scan_plan);
+    let df = df
+        .filter(col("imdb_rating").gt(lit(8.0)))
+        .unwrap()
+        .sort(vec![col("worldwide_gross").sort(true, false)])
+        .unwrap();
+
+    let original_plan = df.logical_plan().clone();
+    println!("Original plan:\n{}\n", original_plan.display_indent());
+
+    // Rewrite leaf EmptyTable -> ListingTable
+    let serializable_plan = original_plan
+        .clone()
+        .rewrite(&mut EmptyTableToListingRewriter)
+        .expect("rewrite should succeed")
+        .data;
+    println!("Rewritten plan:\n{}\n", serializable_plan.display_indent());
+
+    // Serialize and write to disk (consumed by test_plan_deserialization.py)
+    let bytes = logical_plan_to_bytes(&serializable_plan).expect("serialization should succeed");
+    println!("Serialized to {} bytes\n", bytes.len());
+
+    let out_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("plan_bytes_complex.bin");
+    std::fs::write(&out_path, &bytes).expect("failed to write plan bytes");
+
+    // Deserialize
+    let deserialized =
+        datafusion_proto::bytes::logical_plan_from_bytes(&bytes, &ctx.task_ctx())
+            .expect("deserialization should succeed");
+    println!("Deserialized plan:\n{}\n", deserialized.display_indent());
+
+    // Restore EmptyTable at the leaf
+    let restored_plan = deserialized
+        .rewrite(&mut ListingToEmptyTableRewriter)
+        .expect("rewrite should succeed")
+        .data;
+    println!("Restored plan:\n{}\n", restored_plan.display_indent());
+
+    // Schema of the full plan should match
+    assert_eq!(original_plan.schema(), restored_plan.schema());
+
+    // The plan structure should be Sort -> Filter -> TableScan
+    let LogicalPlan::Sort(sort) = &restored_plan else {
+        panic!("Expected Sort at top, got: {}", restored_plan.display());
+    };
+    let LogicalPlan::Filter(_) = sort.input.as_ref() else {
+        panic!("Expected Filter under Sort");
+    };
+
+    let sql = datafusion_sql::unparser::plan_to_sql(&restored_plan)
+        .expect("unparse to SQL should succeed");
+    println!("SQL:\n{sql}");
+    // => SELECT ... FROM movies WHERE imdb_rating > 8.0 ORDER BY worldwide_gross ASC NULLS LAST
 }
