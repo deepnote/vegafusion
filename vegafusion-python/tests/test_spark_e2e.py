@@ -110,9 +110,7 @@ def test_spec_against_spark(spec_path: Path, spark: SparkSession):
         local_tz="UTC",
         default_input_tz="UTC",
         inline_datasets={
-            "sales_data_1kk": ExternalDataset(
-                protocol="spark", schema=sales_schema
-            )
+            "sales_data_1kk": ExternalDataset(protocol="spark", schema=sales_schema)
         },
         extract_threshold=0,
         extracted_format="pyarrow",

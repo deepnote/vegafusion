@@ -334,8 +334,8 @@ async fn test_logical_plan_to_spark_sql_parenthesizes_nested_is_null(
 }
 
 #[tokio::test]
-async fn test_logical_plan_to_spark_sql_rewrites_pg_regex(
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_logical_plan_to_spark_sql_rewrites_pg_regex() -> Result<(), Box<dyn std::error::Error>>
+{
     let schema_fields = vec![
         Field::new("name", DataType::Utf8, false),
         Field::new("value", DataType::Float64, false),
@@ -344,8 +344,11 @@ async fn test_logical_plan_to_spark_sql_rewrites_pg_regex(
     let df = create_test_dataframe(schema_fields).await?;
 
     let filtered_df = df.filter(
-        regexp_like(col("name"), lit(r"^\d{4}-\d{2}-\d{2}$"), None)
-            .or(regexp_like(col("name"), lit(r"[+-]\d{2}:\d{2}$"), None)),
+        regexp_like(col("name"), lit(r"^\d{4}-\d{2}-\d{2}$"), None).or(regexp_like(
+            col("name"),
+            lit(r"[+-]\d{2}:\d{2}$"),
+            None,
+        )),
     )?;
 
     let plan = filtered_df.logical_plan().clone();

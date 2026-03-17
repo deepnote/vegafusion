@@ -1,8 +1,8 @@
-use datafusion_sql::unparser::dialect::CustomDialectBuilder;
-use datafusion_sql::unparser::Unparser;
 use datafusion_common::tree_node::{Transformed, TreeNode};
 use datafusion_common::{Column, ScalarValue};
 use datafusion_expr::{expr::ScalarFunction, Expr, LogicalPlan};
+use datafusion_sql::unparser::dialect::CustomDialectBuilder;
+use datafusion_sql::unparser::Unparser;
 use lazy_static::lazy_static;
 use regex;
 use sqlparser::ast::{self, visit_expressions_mut};
