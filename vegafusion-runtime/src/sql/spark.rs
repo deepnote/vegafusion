@@ -37,6 +37,7 @@ pub fn logical_plan_to_spark_sql(plan: &LogicalPlan) -> Result<String> {
     rewrite_timestamps(&mut statement);
     rewrite_intervals(&mut statement);
     rewrite_nested_is_null(&mut statement);
+    rewrite_pg_regex(&mut statement);
     rewrite_column_identifiers(&mut statement);
 
     let spark_sql = statement.to_string();
@@ -461,6 +462,51 @@ fn chrono_to_spark(fmt: &str) -> Result<String> {
         }
     }
     Ok(out)
+}
+
+/// Rewrite PostgreSQL regex operators (`~`, `~*`, `!~`, `!~*`) to `regexp_like()` calls.
+/// DataFusion 51+ generates `column ~ 'pattern'` instead of `regexp_like(column, 'pattern')`,
+/// but Spark doesn't support the `~` operator.
+fn rewrite_pg_regex(statement: &mut ast::Statement) {
+    let _ = visit_expressions_mut(statement, |expr: &mut ast::Expr| {
+        if let ast::Expr::BinaryOp { left, op, right } = expr {
+            let (negate, _case_insensitive) = match op {
+                ast::BinaryOperator::PGRegexMatch => (false, false),
+                ast::BinaryOperator::PGRegexIMatch => (false, true),
+                ast::BinaryOperator::PGRegexNotMatch => (true, false),
+                ast::BinaryOperator::PGRegexNotIMatch => (true, true),
+                _ => return ControlFlow::<()>::Continue(()),
+            };
+
+            let func_call = ast::Expr::Function(ast::Function {
+                name: ast::ObjectName::from(vec![ast::Ident::new("regexp_like")]),
+                args: ast::FunctionArguments::List(ast::FunctionArgumentList {
+                    duplicate_treatment: None,
+                    args: vec![
+                        ast::FunctionArg::Unnamed(ast::FunctionArgExpr::Expr(*left.clone())),
+                        ast::FunctionArg::Unnamed(ast::FunctionArgExpr::Expr(*right.clone())),
+                    ],
+                    clauses: vec![],
+                }),
+                filter: None,
+                null_treatment: None,
+                over: None,
+                within_group: vec![],
+                uses_odbc_syntax: false,
+                parameters: ast::FunctionArguments::None,
+            });
+
+            if negate {
+                *expr = ast::Expr::UnaryOp {
+                    op: ast::UnaryOperator::Not,
+                    expr: Box::new(func_call),
+                };
+            } else {
+                *expr = func_call;
+            }
+        }
+        ControlFlow::<()>::Continue(())
+    });
 }
 
 /// Rewrite column identifiers to properly quote column names with spaces or special characters

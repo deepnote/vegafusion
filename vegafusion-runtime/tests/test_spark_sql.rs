@@ -2,7 +2,7 @@ use datafusion::datasource::{provider_as_source, MemTable};
 use datafusion::prelude::{DataFrame, SessionContext};
 use datafusion_expr::Expr;
 use datafusion_expr::{col, lit, LogicalPlanBuilder};
-use datafusion_functions::expr_fn::{to_char, to_timestamp_seconds};
+use datafusion_functions::expr_fn::{regexp_like, to_char, to_timestamp_seconds};
 use std::sync::Arc;
 use vegafusion_common::arrow::array::RecordBatch;
 use vegafusion_common::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
@@ -328,6 +328,44 @@ async fn test_logical_plan_to_spark_sql_parenthesizes_nested_is_null(
         spark_sql.trim(),
         expected_sql,
         "Generated SQL should parenthesize nested IS NULL for Spark compatibility"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_logical_plan_to_spark_sql_rewrites_pg_regex(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let schema_fields = vec![
+        Field::new("name", DataType::Utf8, false),
+        Field::new("value", DataType::Float64, false),
+    ];
+
+    let df = create_test_dataframe(schema_fields).await?;
+
+    let filtered_df = df.filter(
+        regexp_like(col("name"), lit(r"^\d{4}-\d{2}-\d{2}$"), None)
+            .or(regexp_like(col("name"), lit(r"[+-]\d{2}:\d{2}$"), None)),
+    )?;
+
+    let plan = filtered_df.logical_plan().clone();
+    let spark_sql = logical_plan_to_spark_sql(&plan)?;
+
+    assert!(
+        !spark_sql.contains(" ~ "),
+        "Should not contain PostgreSQL regex operator '~'. Got: {}",
+        spark_sql
+    );
+    assert!(
+        spark_sql.contains("regexp_like("),
+        "Should contain regexp_like function call. Got: {}",
+        spark_sql
+    );
+
+    let expected_sql = r"SELECT * FROM test_table WHERE regexp_like(test_table.name, '^\d{4}-\d{2}-\d{2}$') OR regexp_like(test_table.name, '[+-]\d{2}:\d{2}$')";
+    assert_eq!(
+        spark_sql, expected_sql,
+        "Should rewrite PG regex operators to regexp_like() calls"
     );
 
     Ok(())

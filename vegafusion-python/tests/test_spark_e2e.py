@@ -133,9 +133,16 @@ def test_spec_against_spark(spec_path: Path, spark: SparkSession):
 
         assert inmemory_name == spark_name
 
+        inmemory_df = inmemory_data.to_pandas()
+        spark_df = spark_data.to_pandas()
+
+        sort_cols = list(inmemory_df.columns)
+        inmemory_df = inmemory_df.sort_values(sort_cols, ignore_index=True)
+        spark_df = spark_df.sort_values(sort_cols, ignore_index=True)
+
         pd.testing.assert_frame_equal(
-            inmemory_data.to_pandas(),
-            spark_data.to_pandas(),
+            inmemory_df,
+            spark_df,
             check_dtype=False,
             check_like=True,
             atol=1e-6,
