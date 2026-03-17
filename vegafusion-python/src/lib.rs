@@ -2,6 +2,7 @@ mod chart_state;
 mod plan_resolver;
 mod unparse;
 mod utils;
+mod vendor;
 use lazy_static::lazy_static;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -142,6 +143,19 @@ impl PyVegaFusionRuntime {
             resolvers,
             use_current_thread,
         )
+    }
+
+    #[staticmethod]
+    #[pyo3(signature = (max_capacity=None, memory_limit=None, worker_threads=None, vendor=None, executor=None))]
+    pub fn new_embedded_vendor(
+        max_capacity: Option<usize>,
+        memory_limit: Option<usize>,
+        worker_threads: Option<i32>,
+        vendor: Option<String>,
+        executor: Option<Py<PyAny>>,
+    ) -> PyResult<Self> {
+        let resolvers = crate::vendor::select_resolvers_for_vendor(vendor, executor)?;
+        Self::build_with_resolvers(max_capacity, memory_limit, worker_threads, resolvers, false)
     }
 
     #[staticmethod]

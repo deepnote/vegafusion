@@ -5,7 +5,9 @@ from types import ModuleType
 from typing import (
     TYPE_CHECKING,
     Any,
+    Callable,
     Literal,
+    Protocol,
     TypedDict,
     Union,
     cast,
@@ -36,6 +38,19 @@ if TYPE_CHECKING:
     from vegafusion.dataset import ExternalDataset
     from vegafusion.plan_resolver import PlanResolver
 
+
+class VendorExecutorProtocol(Protocol):
+    """Protocol for objects with execute_plan method (vendor API)."""
+
+    def execute_plan(self, sql_query: str) -> pa.Table:
+        """Execute a SQL query and return an Arrow table."""
+        ...
+
+
+VendorExecutor = Union[
+    Callable[[str], "pa.Table"],
+    VendorExecutorProtocol,
+]
 
 # This type isn't defined in the grpcio package, so let's at least name it
 UnaryUnaryMultiCallable = Any
@@ -227,6 +242,7 @@ class VegaFusionRuntime:
         self._memory_limit = memory_limit
         self._worker_threads = worker_threads
         self._plan_resolvers = _normalize_resolvers(plan_resolver)
+        self._has_rust_resolvers = False
 
     @property
     def runtime(self) -> PyVegaFusionRuntime:
@@ -259,6 +275,49 @@ class VegaFusionRuntime:
                     self.worker_threads,
                 )
         return self._runtime
+
+    @classmethod
+    def new_vendor(
+        cls,
+        vendor: Literal["datafusion", "sparksql"],
+        executor: VendorExecutor | None = None,
+        cache_capacity: int = 64,
+        memory_limit: int | None = None,
+        worker_threads: int | None = None,
+    ) -> VegaFusionRuntime:
+        """Create a runtime with a vendor-specific plan resolver.
+
+        Args:
+            vendor: The vendor to use. ``"sparksql"`` translates logical plans
+                to Spark SQL and forwards them to the executor.
+                ``"datafusion"`` uses the built-in DataFusion engine.
+            executor: Required for ``vendor="sparksql"``. A callable that
+                receives a SQL string and returns a PyArrow Table, or an
+                object with an ``execute_plan(sql) -> pa.Table`` method.
+            cache_capacity: Cache capacity.
+            memory_limit: Memory limit.
+            worker_threads: Number of worker threads.
+
+        Returns:
+            A configured VegaFusionRuntime instance.
+        """
+        from vegafusion._vegafusion import PyVegaFusionRuntime
+
+        inst = cls(cache_capacity, memory_limit, worker_threads)
+        if inst.memory_limit is None:
+            inst.memory_limit = get_virtual_memory() // 2
+        if inst.worker_threads is None:
+            inst.worker_threads = get_cpu_count()
+
+        inst._has_rust_resolvers = vendor not in (None, "", "datafusion")
+        inst._runtime = PyVegaFusionRuntime.new_embedded_vendor(
+            inst.cache_capacity,
+            inst.memory_limit,
+            inst.worker_threads,
+            vendor,
+            executor,
+        )
+        return inst
 
     def grpc_connect(self, url: str) -> None:
         """
@@ -394,7 +453,7 @@ class VegaFusionRuntime:
                         raise
 
         # Validate: ExternalDatasets require a plan resolver
-        if external_dataset_refs and not self._plan_resolvers:
+        if external_dataset_refs and not self._plan_resolvers and not self._has_rust_resolvers:
             details = [
                 f"  - {name!r} (protocol={value.protocol!r})"
                 for name, value in inline_datasets.items()

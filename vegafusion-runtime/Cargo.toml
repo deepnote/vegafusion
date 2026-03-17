@@ -158,6 +158,10 @@ workspace = true
 workspace = true
 optional = true
 
+[dependencies.datafusion-sql]
+workspace = true
+features = ["unparser"]
+
 [dependencies.tokio]
 workspace = true
 features = ["macros"]

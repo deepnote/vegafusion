@@ -1,0 +1,298 @@
+name: build-and-test
+
+on:
+  workflow_call:
+    inputs:
+      build-all-platforms:
+        description: 'Build wheels for all platforms (Linux ARM64, Windows, macOS)'
+        required: false
+        type: boolean
+        default: true
+permissions:
+  contents: read
+  actions: write
+jobs:
+  check-rust:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: prefix-dev/setup-pixi@97359467eae22a2d994114fe900db762fea86261 # v0.8.9
+        with:
+          cache: true
+      - name: Cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          key: ${{ runner.os }}-${{ hashFiles('pixi.lock', 'Cargo.lock', 'vegafusion-python/pyproject.toml') }}-check-rust
+          path: |
+            ~/.cargo
+            target
+            .pixi
+      - name: Check fmt
+        run: pixi run check-rs-fmt
+      - name: Check warnings
+        run: pixi run check-rs-warnings
+      - name: Check clippy
+        run: pixi run check-rs-clippy
+
+  test-rust:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921
+        with:
+          toolchain: stable
+      - uses: prefix-dev/setup-pixi@97359467eae22a2d994114fe900db762fea86261 # v0.8.9
+      - name: Cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          key: ${{ runner.os }}-${{ hashFiles('pixi.lock', 'Cargo.lock', 'vegafusion-python/pyproject.toml') }}-test-rust2
+          path: |
+            ~/.cargo
+            target
+            .pixi
+      - name: start minio server in the background
+        run: pixi run start-minio &
+      - name: Test rust
+        run: |
+          pixi run test-rs --release
+      - name: Upload test artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure()
+        with:
+          name: vegafusion-rt-test-images-linux
+          path: |
+            vegafusion-runtime/tests/output
+
+  check-vegafusion-python:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921
+        with:
+          toolchain: stable
+      - uses: prefix-dev/setup-pixi@97359467eae22a2d994114fe900db762fea86261 # v0.8.9
+      - name: Cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          key: ${{ runner.os }}-${{ hashFiles('pixi.lock', 'Cargo.lock', 'vegafusion-python/pyproject.toml') }}-build-vegafusion-wasm
+          path: |
+            ~/.cargo
+            target
+            .pixi
+      - name: Dev python
+        run: |
+          pixi run dev-py
+      - name: Check format and lint
+        run: |
+          pixi run lint-check-py
+      - name: Type check
+        run: |
+          pixi run type-check-py -v
+      - name: Verify generated proto files are up to date
+        run: |
+          pixi run gen-proto-py
+          git diff --exit-code vegafusion-python/vegafusion/proto/
+
+  build-vegafusion-python-linux-64:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - name: Clear target/wheels
+        run: rm -rf target/wheels
+      - name: Build wheels (Linux)
+        uses: PyO3/maturin-action@ea5bac0f1ccd0ab11c805e2b804bfcb65dac2eab # v1.45.0
+        with:
+          command: build
+          manylinux: 2014
+          rust-toolchain: stable
+          args: -m vegafusion-python/Cargo.toml --profile release-opt --features=protobuf-src --strip --sdist
+      - name: Upload artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: python-wheels-linux-64
+          path: |
+            target/wheels/*.tar.gz
+            target/wheels/*.whl
+          retention-days: 1
+          if-no-files-found: error
+
+  build-vegafusion-python-linux-arm64:
+    if: inputs.build-all-platforms
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - name: Clear target/wheels
+        run: rm -rf target/wheels
+      - name: Build arm64 wheels
+        uses: PyO3/maturin-action@ea5bac0f1ccd0ab11c805e2b804bfcb65dac2eab # v1.45.0
+        with:
+          command: build
+          manylinux: 2_28
+          rust-toolchain: stable
+          args: -m vegafusion-python/Cargo.toml --profile release-opt --features=protobuf-src --strip --target aarch64-unknown-linux-gnu
+      - name: Upload artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: python-wheels-linux-arm64
+          path: |
+            target/wheels/*.tar.gz
+            target/wheels/*.whl
+          retention-days: 1
+          if-no-files-found: error
+
+  build-vegafusion-python-win-64:
+    if: inputs.build-all-platforms
+    runs-on: windows-2022
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921
+        with:
+          toolchain: stable
+      - uses: prefix-dev/setup-pixi@97359467eae22a2d994114fe900db762fea86261 # v0.8.9
+      - name: Cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          key: ${{ runner.os }}-${{ hashFiles('pixi.lock', 'Cargo.lock', 'vegafusion-python/pyproject.toml') }}-build-vegafusion-python-win-64
+          path: |
+            ~/.cargo
+            target
+            .pixi
+      - name: Build vegafusion-python
+        run: |
+          pixi run build-py
+      - name: Upload artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: python-wheels-win-64
+          path: |
+            target/wheels/*.tar.gz
+            target/wheels/*.whl
+          retention-days: 1
+          if-no-files-found: error
+
+  build-vegafusion-python-osx-64:
+    if: inputs.build-all-platforms
+    runs-on: macos-15-intel
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921
+        with:
+          toolchain: stable
+      - uses: prefix-dev/setup-pixi@97359467eae22a2d994114fe900db762fea86261 # v0.8.9
+      - name: Cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          key: ${{ runner.os }}-${{ hashFiles('pixi.lock', 'Cargo.lock', 'vegafusion-python/pyproject.toml') }}-build-vegafusion-python-osx-64
+          path: |
+            ~/.cargo
+            target
+            .pixi
+      - name: Build vegafusion-python
+        run: |
+          pixi run build-py
+      - name: Upload artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: python-wheels-osx-64
+          path: |
+            target/wheels/*.tar.gz
+            target/wheels/*.whl
+          retention-days: 1
+          if-no-files-found: error
+
+  build-vegafusion-python-osx-arm64:
+    if: inputs.build-all-platforms
+    runs-on: macos-15
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin
+      - uses: prefix-dev/setup-pixi@97359467eae22a2d994114fe900db762fea86261 # v0.8.9
+      - name: Cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          key: osx-arm64-${{ hashFiles('pixi.lock', 'Cargo.lock', 'vegafusion-python/pyproject.toml') }}-build-vegafusion-python-osx-arm64
+          path: |
+            ~/.cargo
+            target
+            .pixi
+      - name: Build vegafusion-python
+        run: |
+          pixi run build-py --target aarch64-apple-darwin
+      - name: Upload artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: python-wheels-osx-arm64
+          path: |
+            target/wheels/*.tar.gz
+            target/wheels/*.whl
+          retention-days: 1
+          if-no-files-found: error
+
+  test-vegafusion-python-linux-64:
+    runs-on: ubuntu-22.04
+    needs: [build-vegafusion-python-linux-64]
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+      - name: Install Chrome
+        uses: browser-actions/setup-chrome@c785b87e244131f27c9f19c1a33e2ead956ab7ce # v1.7.3
+        with:
+          chrome-version: stable
+      - name: Install fonts on Linux
+        if: runner.os == 'Linux'
+        run: |
+          echo ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true | sudo debconf-set-selections
+          sudo apt-get install ttf-mscorefonts-installer
+      - name: Download vegafusion-python wheel
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: python-wheels-linux-64
+          path: target/wheels/
+      - name: install wheels
+        working-directory: target/wheels/
+        run: |
+          ls -la
+          python -m pip install deepnote_vegafusion-*manylinux_2_17_x86_64*.whl
+
+          # Optional dependencies
+          python -m pip install pyarrow pandas polars-lts-cpu "duckdb>=1.0" "vl-convert-python>=1.0.1rc1" scikit-image "pandas>=2.2" jupytext voila anywidget ipywidgets chromedriver-binary-auto "protobuf==5.29.3"
+
+          # Test dependencies
+          python -m pip install pytest altair vega-datasets scikit-image jupytext voila ipykernel anywidget ipywidgets selenium flaky tenacity chromedriver-binary-auto inline-snapshot "pyspark==3.5.*"
+      - name: Test vegafusion
+        working-directory: vegafusion-python/
+        env:
+          VEGAFUSION_TEST_HEADLESS: 1
+        run: pytest -vv -rA tests/test_spark_e2e.py
+      - name: Upload test artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure()
+        with:
+          name: vegafusion-python-test-failures
+          path: |
+            vegafusion-python/tests/output/*

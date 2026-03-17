@@ -1,0 +1,165 @@
+{
+    "layer": [
+        {
+            "layer": [
+                {
+                    "layer": [
+                        {
+                            "mark": {
+                                "clip": true,
+                                "type": "bar",
+                                "color": "#2266D3",
+                                "tooltip": true
+                            },
+                            "encoding": {
+                                "x": {
+                                    "bin": {
+                                        "step": 10
+                                    },
+                                    "sort": "descending",
+                                    "type": "quantitative",
+                                    "field": "customer_age",
+                                    "scale": {
+                                        "type": "linear"
+                                    }
+                                },
+                                "y": {
+                                    "axis": {
+                                        "format": {
+                                            "type": "default",
+                                            "decimals": null
+                                        },
+                                        "formatType": "numberFormatFromNumberType"
+                                    },
+                                    "type": "quantitative",
+                                    "field": "customer_name",
+                                    "scale": {
+                                        "type": "linear"
+                                    },
+                                    "format": {
+                                        "type": "default",
+                                        "decimals": null
+                                    },
+                                    "aggregate": "count",
+                                    "formatType": "numberFormatFromNumberType"
+                                },
+                                "color": {
+                                    "type": "nominal",
+                                    "datum": "Orders",
+                                    "scale": {
+                                        "range": [
+                                            "#2266D3"
+                                        ],
+                                        "domain": [
+                                            "Orders"
+                                        ]
+                                    }
+                                },
+                                "opacity": {
+                                    "condition": {
+                                        "test": {
+                                            "and": [
+                                                {
+                                                    "param": "legend_size_0"
+                                                },
+                                                {
+                                                    "param": "legend_color_0"
+                                                },
+                                                {
+                                                    "param": "interval_selection"
+                                                }
+                                            ]
+                                        },
+                                        "value": 1
+                                    },
+                                    "value": 0.2
+                                }
+                            },
+                            "transform": [],
+                            "params": [
+                                {
+                                    "name": "legend_size_0",
+                                    "select": {
+                                        "type": "point",
+                                        "encodings": [
+                                            "size"
+                                        ],
+                                        "toggle": "true"
+                                    },
+                                    "bind": "legend"
+                                },
+                                {
+                                    "name": "legend_color_0",
+                                    "select": {
+                                        "type": "point",
+                                        "encodings": [
+                                            "color"
+                                        ],
+                                        "toggle": "true"
+                                    },
+                                    "bind": "legend"
+                                },
+                                {
+                                    "name": "interval_selection",
+                                    "select": {
+                                        "type": "interval",
+                                        "encodings": [
+                                            "x",
+                                            "y"
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ],
+            "resolve": {
+                "scale": {
+                    "color": "independent"
+                }
+            }
+        }
+    ],
+    "title": "",
+    "config": {
+        "legend": {
+            "disable": false
+        },
+        "axisQuantitative": {
+            "tickCount": 5
+        },
+        "area": {
+            "line": true
+        },
+        "mark": {
+            "color": "#2266D3"
+        },
+        "customFormatTypes": true
+    },
+    "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+    "encoding": {},
+    "usermeta": {
+        "seriesNames": [
+            "Orders"
+        ],
+        "seriesOrder": [
+            0
+        ],
+        "aditionalTypeInfo": {
+            "histogramLayerIndexes": [
+                0
+            ]
+        },
+        "specSchemaVersion": 2,
+        "tooltipDefaultMode": true
+    },
+    "height": "container",
+    "width": "container",
+    "autosize": {
+        "type": "fit"
+    },
+    "data": {
+        "url": "vegafusion+dataset://sales_data_1kk"
+    }
+}

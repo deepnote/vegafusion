@@ -4915,6 +4915,7 @@ dependencies = [
  "datafusion-optimizer",
  "datafusion-physical-expr",
  "datafusion-proto",
+ "datafusion-sql",
  "env_logger",
  "float-cmp",
  "futures",
