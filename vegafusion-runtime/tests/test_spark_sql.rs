@@ -354,17 +354,6 @@ async fn test_logical_plan_to_spark_sql_rewrites_pg_regex() -> Result<(), Box<dy
     let plan = filtered_df.logical_plan().clone();
     let spark_sql = logical_plan_to_spark_sql(&plan)?;
 
-    assert!(
-        !spark_sql.contains(" ~ "),
-        "Should not contain PostgreSQL regex operator '~'. Got: {}",
-        spark_sql
-    );
-    assert!(
-        spark_sql.contains("regexp_like("),
-        "Should contain regexp_like function call. Got: {}",
-        spark_sql
-    );
-
     let expected_sql = r"SELECT * FROM test_table WHERE regexp_like(test_table.name, '^\d{4}-\d{2}-\d{2}$') OR regexp_like(test_table.name, '[+-]\d{2}:\d{2}$')";
     assert_eq!(
         spark_sql, expected_sql,
