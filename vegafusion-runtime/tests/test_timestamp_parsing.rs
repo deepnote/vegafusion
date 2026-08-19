@@ -92,29 +92,18 @@ mod test_timestamp_parsing {
         );
     }
 
-    /// Timestamps carrying an offset take a separate parsing path, which must keep
-    /// accepting arbitrary precision too.
-    #[rstest(
-        input,
-        expected,
-        case("2024-04-17T23:18:06.527738Z", "2024-04-17T23:18:06.527"),
-        case("2024-04-17T23:18:06.5277389123Z", "2024-04-17T23:18:06.527"),
-        case("2024-04-17T23:18:06.527738+02:00", "2024-04-17T21:18:06.527")
-    )]
-    fn test_offset_fractional_seconds(input: &str, expected: &str) {
-        assert_eq!(
-            TOKIO_RUNTIME.block_on(to_date(input, "UTC", "UTC")),
-            expected
-        );
-    }
-
     /// Following the browser: a timestamp without an offset is read in `default_input_tz`,
     /// one with an offset is an absolute instant, and a bare ISO date is always UTC.
+    ///
+    /// A non-UTC `default_input_tz` is what makes these discriminating: under UTC every
+    /// branch agrees. The offset-bearing cases also guard the other side of
+    /// `str_to_timestamp`, which reaches DataFusion's parser rather than the format list.
     #[rstest(
         input,
         expected,
         case("2024-04-17T23:18:06.527738", "2024-04-18T03:18:06.527"),
         case("2024-04-17T23:18:06.527738Z", "2024-04-17T23:18:06.527"),
+        case("2024-04-17T23:18:06.5277389123Z", "2024-04-17T23:18:06.527"),
         case("2024-04-17T23:18:06.527738+02:00", "2024-04-17T21:18:06.527"),
         case("2024-04-17", "2024-04-17T00:00:00.000")
     )]
