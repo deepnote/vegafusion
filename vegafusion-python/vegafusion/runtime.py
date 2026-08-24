@@ -688,7 +688,7 @@ class VegaFusionRuntime:
         )
 
         def normalize_timezones(
-            dfs: list[nw.DataFrame[IntoFrameT] | nw.LazyFrame[IntoFrameT]],  # type: ignore[type-var]
+            dfs: list[nw.DataFrame[IntoFrameT] | nw.LazyFrame[IntoFrameT]],
         ) -> list[DataFrameLike]:
             import narwhals.stable.v1 as nw
 
