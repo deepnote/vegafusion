@@ -49,3 +49,17 @@ Python "symbol not found":
 
 VegaJS test crashes:
 - Check `npm install` completed in `tests/util/vegajs_runtime/`
+
+## Documentation
+
+Before opening a pull request, check whether the change makes any documentation stale, and update it in the same pull request:
+
+- `docs/source/` - the documentation site (Sphinx), published from `docs/sync_docs.sh`
+- `README.md` and the per-crate `README.md` - features, supported versions, and usage
+- Rustdoc comments on the public API you changed
+
+Update only the documentation your change actually affects. This repository is Deepnote's fork of upstream VegaFusion — keep documentation edits scoped to the behavior the fork actually changes.
+
+## Pull Requests
+
+Keep each pull request as simple and clean as possible: one purpose, the smallest diff that achieves it, and no drive-by refactors or unrelated reformatting of upstream code (which makes future upstream merges harder).
